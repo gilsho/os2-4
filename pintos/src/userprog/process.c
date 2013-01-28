@@ -45,6 +45,32 @@ process_execute (const char *file_name)
   return tid;
 }
 
+tid_t
+process_execute_new (const char *args)
+{
+  char *arg_copy;
+  
+  /* Make a copy of FILE_NAME.
+     Otherwise there's a race between the caller and load(). */
+  args_copy = palloc_get_page (0);
+  if (args_copy == NULL)
+    return TID_ERROR;
+  strlcpy (args_copy, args, PGSIZE);
+  
+  char *token, *save_ptr;
+  for (token = strtok_r (args_copy, " ", &save_ptr); token != NULL;
+       token = strtok_r (NULL, " ", &save_ptr))
+  {
+    // first token is program name
+    
+    printf ("'%s'\n", token);
+  }
+  
+  typedef void thread_func (void *aux);
+  tid_t thread_create (const char *name, int priority, thread_func *, void *);
+  
+}
+
 /* A thread function that loads a user process and starts it
    running. */
 static void
