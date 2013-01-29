@@ -23,6 +23,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 void push_stack(void **stack_, void *data, size_t n);
 void push_stack_int(void **stack_, int val);
 void push_stack_char(void **stack_, char c);
+void parse_args(const char *args, void **esp, char **file_name);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -206,6 +207,9 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           bool writable);
 
 
+/* Pushes data of length n bytes onto a user stack. assumes the 
+   stack is always pointing to last byte of valid data. The
+   function will maintain this invariant.*/
 void push_stack(void **stack_, void *data, size_t n)
 {
   char **stack = (char **)stack_;
@@ -213,14 +217,65 @@ void push_stack(void **stack_, void *data, size_t n)
   memcpy(*stack,data,n);
 }
 
+/* pushes an integer value onto a user stack. see push_stack
+   for implementation details */
 void push_stack_int(void **stack_, int val)
 {
   push_stack(stack_,&val,sizeof(int));
 }
 
+/* Pushes a character onto a user stack. see push_stack for
+   implementation details. */
 void push_stack_char(void **stack_, char c)
 {
   push_stack(stack_,&c,sizeof(char));
+}
+
+/* Parses a command line string and prepares the user stack pointed
+   to by esp for execution. The function parses the string and places
+   the arguments on the user stack in preparation for a "int main(argv,argc)"
+   call. Function sets file_name to point to the executable file name 
+   located on the user stack.*/
+void parse_args(const char *args, void **esp, char **file_name)
+{
+  /* +1 is to include the null terminating character */
+  int arglen = strnlen(args,PGSIZE) + 1;
+  push_stack(esp,(void *)args,arglen);
+  
+  char *args_stack = *esp;
+
+  /* word align the stack address */
+  int padding = ((int) (*esp)) % 4;
+  int i;
+  for(i=0; i<padding; i++) {
+    push_stack_char(esp,0);
+  }
+  
+  /* tokenize */
+  char *token, *save_ptr;
+  int argc = 0;
+
+  char **tmp = (char **) args;
+
+  for (token = strtok_r (args_stack, " ", &save_ptr); token != NULL;
+       token = strtok_r (NULL, " ", &save_ptr)) {
+    tmp[argc] = token;
+    argc++;
+  }
+
+  /* what if stack exceeds full page ? */
+
+  push_stack_int(esp,0);
+  for (i = argc-1; i >= 0; i--) {
+    push_stack_int(esp,(int) tmp[i]);
+  }
+
+  (*file_name) = *((char **)(*esp));
+
+  push_stack_int(esp,(int) *esp);
+  push_stack_int(esp,argc);
+  push_stack_int(esp,0);
+
 }
 
 /* Loads an ELF executable from FILE_NAME into the current thread.
@@ -247,47 +302,10 @@ load (const char *args, void (**eip) (void), void **esp)
   if (!setup_stack (esp))
     goto done;
 
-  /* +1 is to include the null terminating character */
-  int arglen = strnlen(args,PGSIZE) + 1;
-  push_stack(esp,(void *)args,arglen);
+  /* Parse command line arguments and push them onto user task */
+  char *file_name;
+  parse_args(args,esp,&file_name);
   
-  char *args_stack = *esp;
-
-
-  /* word align the stack address */
-  int padding = ((int) (*esp)) % 4;
-  for(i=0; i<padding; i++) {
-    push_stack_char(esp,0);
-  }
-  
-  /* tokenize */
-  char *token, *save_ptr;
-  int argc = 0;
-
-  char **tmp = (char **) args;
-
-  for (token = strtok_r (args_stack, " ", &save_ptr); token != NULL;
-       token = strtok_r (NULL, " ", &save_ptr)) {
-    tmp[argc] = token;
-    argc++;
-  }
-
-  /* what if stack exceeds full page ? */
-
-  push_stack_int(esp,0);
-  for (i = argc-1; i >= 0; i--) {
-    push_stack_int(esp,(int) tmp[i]);
-  }
-
-
-  printf("filename: %s\n",*((char **)(*esp)));
-
-  char *file_name = *((char **)(*esp));
-
-  push_stack_int(esp,(int) *esp);
-  push_stack_int(esp,argc);
-  push_stack_int(esp,0);
-
   /* Open executable file. */
   file = filesys_open (file_name);
   if (file == NULL) 
