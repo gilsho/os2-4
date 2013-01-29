@@ -20,37 +20,41 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+void push_stack(void **stack_, void *data, size_t n);
+void push_stack_int(void **stack_, int val);
+void push_stack_char(void **stack_, char c);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
-process_execute (const char *file_name) 
+process_execute (const char *args) 
 {
-  char *fn_copy;
+  char *args_copy;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  args_copy = palloc_get_page (0);
+  if (args_copy == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  strlcpy (args_copy, args, PGSIZE);
+
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (args, PRI_DEFAULT, start_process, args_copy);
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+    palloc_free_page (args_copy); 
   return tid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *file_name_)
+start_process (void *args_)
 {
-  char *file_name = file_name_;
+  char *args = args_;
   struct intr_frame if_;
   bool success;
 
@@ -59,10 +63,10 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  success = load (args, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
+  palloc_free_page (args);
   if (!success) 
     thread_exit ();
 
@@ -201,12 +205,30 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
                           bool writable);
 
+
+void push_stack(void **stack_, void *data, size_t n)
+{
+  char **stack = (char **)stack_;
+  *stack -= n;
+  memcpy(*stack,data,n);
+}
+
+void push_stack_int(void **stack_, int val)
+{
+  push_stack(stack_,&val,sizeof(int));
+}
+
+void push_stack_char(void **stack_, char c)
+{
+  push_stack(stack_,&c,sizeof(char));
+}
+
 /* Loads an ELF executable from FILE_NAME into the current thread.
    Stores the executable's entry point into *EIP
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load (const char *file_name, void (**eip) (void), void **esp) 
+load (const char *args, void (**eip) (void), void **esp)
 {
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
@@ -220,6 +242,51 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
+
+  /* Set up stack. */
+  if (!setup_stack (esp))
+    goto done;
+
+  /* +1 is to include the null terminating character */
+  int arglen = strnlen(args,PGSIZE) + 1;
+  push_stack(esp,(void *)args,arglen);
+  
+  char *args_stack = *esp;
+
+
+  /* word align the stack address */
+  int padding = ((int) (*esp)) % 4;
+  for(i=0; i<padding; i++) {
+    push_stack_char(esp,0);
+  }
+  
+  /* tokenize */
+  char *token, *save_ptr;
+  int argc = 0;
+
+  char **tmp = (char **) args;
+
+  for (token = strtok_r (args_stack, " ", &save_ptr); token != NULL;
+       token = strtok_r (NULL, " ", &save_ptr)) {
+    tmp[argc] = token;
+    argc++;
+  }
+
+  /* what if stack exceeds full page ? */
+
+  push_stack_int(esp,0);
+  for (i = argc-1; i >= 0; i--) {
+    push_stack_int(esp,(int) tmp[i]);
+  }
+
+
+  printf("filename: %s\n",*((char **)(*esp)));
+
+  char *file_name = *((char **)(*esp));
+
+  push_stack_int(esp,(int) *esp);
+  push_stack_int(esp,argc);
+  push_stack_int(esp,0);
 
   /* Open executable file. */
   file = filesys_open (file_name);
@@ -301,9 +368,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
         }
     }
 
-  /* Set up stack. */
-  if (!setup_stack (esp))
-    goto done;
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
