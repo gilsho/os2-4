@@ -173,6 +173,8 @@ bool sys_wait(int *stack, uint32_t *eax)
 {
 	int pid = pop_arg(&stack);
 	
+	/* get child_tid from pid */
+	/* process_wait (child_tid) */
 	
 	return false;		
 }

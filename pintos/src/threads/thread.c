@@ -283,6 +283,10 @@ thread_exit (void)
   ASSERT (!intr_context ());
 
 #ifdef USERPROG
+  struct file *exec_file = thread_current ()->exec_file;
+  if (exec_file != NULL)
+    file_close(exec_file);
+  thread_current ()->exec_file = NULL;
   thread_fd_destroy();
   process_exit ();
 #endif
@@ -466,6 +470,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->magic = THREAD_MAGIC;
   
 #ifdef USERPROG
+  t->exec_file = NULL;
   thread_fd_init(t);
 #endif
 

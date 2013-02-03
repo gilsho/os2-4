@@ -106,6 +106,8 @@ struct thread
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
     
+    struct file *exec_file;             /* Executable file. */
+    
     struct list child_list;             /* List of child threads. */
     struct list_elem child_elem;        /* List element for child threads 
                                            list of parent thread. */
