@@ -17,6 +17,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/synch.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -24,6 +25,13 @@ void push_stack(void **stack_, void *data, size_t n);
 void push_stack_int(void **stack_, int val);
 void push_stack_char(void **stack_, char c);
 void parse_args(const char *args, void **esp, char **file_name);
+
+struct process_init_data
+{
+  char *args;
+  struct semaphore sema;
+  bool load_status;
+};
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -42,20 +50,37 @@ process_execute (const char *args)
     return TID_ERROR;
   strlcpy (args_copy, args, PGSIZE);
 
+  struct process_init_data init_data;
+  init_data.args = args_copy;
+  sema_init(&(init_data.sema), 0);
+  init_data.load_status = false;
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (args, PRI_DEFAULT, start_process, args_copy);
+  /*tid = thread_create (args, PRI_DEFAULT, start_process, args_copy); */
+  tid = thread_create (args, PRI_DEFAULT, start_process, (void *)&init_data);
+  
+  sema_down(&(init_data.sema));
+  
+  printf("in process_execute, load_status: %d\n", (int)init_data.load_status);
+  
   if (tid == TID_ERROR)
     palloc_free_page (args_copy); 
+    
+  if (!init_data.load_status)
+    tid = TID_ERROR;
+
   return tid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *args_)
+start_process (void * init_data_)
 {
-  char *args = args_;
+  struct process_init_data *init_data = (struct process_init_data *)init_data_;
+  char *args = init_data->args;
+
+  /*char *args = args_;*/
   struct intr_frame if_;
   bool success;
 
@@ -66,6 +91,11 @@ start_process (void *args_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (args, &if_.eip, &if_.esp);
 
+  printf("in start_process, success: %d\n", (int)success);
+  
+  init_data->load_status = success;
+  sema_up(&(init_data->sema));
+  
   /* If load failed, quit. */
   palloc_free_page (args);
   if (!success) 
@@ -93,6 +123,8 @@ start_process (void *args_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  while (true);
+  
   return -1;
 }
 
@@ -119,6 +151,8 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+  
+  printf ("%s: exit(%d)\n", cur->name, cur->exit_code);
 }
 
 /* Sets up the CPU for running user code in the current

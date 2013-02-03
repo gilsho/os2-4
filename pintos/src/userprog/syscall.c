@@ -8,6 +8,7 @@
 #include "threads/synch.h"
 #include "filesys/filesys.h"
 #include "filesys/file.h"
+#include "devices/shutdown.h"
 #include <string.h>
 
 struct lock lock_filesys;
@@ -139,7 +140,7 @@ valid_user_addr(void *uaddr)
 /* Halt the operating system. */
 bool sys_halt(int *stack)
 {
-	/* Change once implemented */
+	shutdown_power_off();
 	return false;	
 }
 
@@ -147,7 +148,9 @@ bool sys_halt(int *stack)
 bool sys_exit(int *stack)
 {
 	int status = pop_arg(&stack);
-	/* Change once implemented */
+	
+	/* thread_current()->exit_code = status; */
+	
 	return false;		
 }
 
@@ -155,15 +158,22 @@ bool sys_exit(int *stack)
 bool sys_exec(int *stack, uint32_t *eax)
 {
 	const char *cmdline = (char *) pop_arg(&stack);
-	/* Change once implemented */
-	return false;	
+	
+	tid_t tid = process_execute (cmdline);
+	
+	printf("in sys_exec, tid: %d\n", (int) tid);
+	/* push syscall result to the user program */
+  memcpy(eax, &tid, sizeof(uint32_t));
+	
+	return true;	
 }
 
 /* Wait for a child process to die. */
 bool sys_wait(int *stack, uint32_t *eax)
 {
 	int pid = pop_arg(&stack);
-	/* Change once implemented */
+	
+	
 	return false;		
 }
 
@@ -213,8 +223,6 @@ bool sys_open(int *stack, uint32_t *eax)
 
   if (!valid_user_addr((void *)name))
     return false;
-
-  printf("file name: %s\n", name);
     
 	struct file *f;
 	
@@ -222,14 +230,10 @@ bool sys_open(int *stack, uint32_t *eax)
 	f = filesys_open (name);
 	lock_release(&lock_filesys);
 	
-	printf("file ptr: %p\n", f);
-	
 	/* obtain a new file descriptor from the thread's table */
 	int fd = -1;
 	if (f != NULL)
 	  fd = thread_fd_set(f);
-	  
-	printf("file desc: %d\n", fd);
 	
 	/* push syscall result to the user program */
   memcpy(eax, &fd, sizeof(uint32_t));

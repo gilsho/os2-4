@@ -1,4 +1,7 @@
-cd build
+cd ../examples
+make clean
+make
+cd ../userprog/build
 rm -f filesys.dsk
 pintos-mkdisk filesys.dsk --filesys-size=2
 pintos -f -q

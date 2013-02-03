@@ -105,6 +105,12 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    
+    struct list child_list;             /* List of child threads. */
+    struct list_elem child_elem;        /* List element for child threads 
+                                           list of parent thread. */
+    int exit_code;                      /* Exit status code. */
+    
     struct file * fd_table[MAX_THREAD_OPEN_FILES]; /* File desc. table */
 #endif
 
