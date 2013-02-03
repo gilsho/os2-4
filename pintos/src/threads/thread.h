@@ -5,6 +5,15 @@
 #include <list.h>
 #include <stdint.h>
 
+#ifdef USERPROG
+#include "filesys/file.h"
+#endif
+
+#ifdef USERPROG
+/* Maximum number of open file descriptors per thread. */
+#define MAX_THREAD_OPEN_FILES 128
+#endif
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -96,6 +105,7 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    struct file * fd_table[MAX_THREAD_OPEN_FILES]; /* File desc. table */
 #endif
 
     /* Owned by thread.c. */
@@ -137,5 +147,13 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+#ifdef USERPROG
+void thread_fd_init(struct thread *t);
+void thread_fd_destroy(void);
+int thread_fd_set(struct file *file);
+struct file* thread_fd_get(int fd);
+void thread_fd_clear(int fd);
+#endif
 
 #endif /* threads/thread.h */

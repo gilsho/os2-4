@@ -5,62 +5,28 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
+#include "threads/synch.h"
+#include "filesys/filesys.h"
+#include "filesys/file.h"
+#include <string.h>
 
-/* Interrupt stack frame.
-struct intr_frame
-  {
-    /* Pushed by intr_entry in intr-stubs.S.
-       These are the interrupted task's saved registers.
-    uint32_t edi;               /* Saved EDI. 
-    uint32_t esi;               /* Saved ESI. *
-    uint32_t ebp;               /* Saved EBP. *
-    uint32_t esp_dummy;         /* Not used. *
-    uint32_t ebx;               /* Saved EBX. *
-    uint32_t edx;               /* Saved EDX. *
-    uint32_t ecx;               /* Saved ECX. *
-    uint32_t eax;               /* Saved EAX. *
-    uint16_t gs, :16;           /* Saved GS segment register. *
-    uint16_t fs, :16;           /* Saved FS segment register. *
-    uint16_t es, :16;           /* Saved ES segment register. *
-    uint16_t ds, :16;           /* Saved DS segment register. *
-
-    /* Pushed by intrNN_stub in intr-stubs.S. 
-    uint32_t vec_no;            /* Interrupt vector number. *
-
-    /* Sometimes pushed by the CPU,
-       otherwise for consistency pushed as 0 by intrNN_stub.
-       The CPU puts it just under `eip', but we move it here. *
-    uint32_t error_code;        /* Error code. *
-
-    /* Pushed by intrNN_stub in intr-stubs.S.
-       This frame pointer eases interpretation of backtraces. *
-    void *frame_pointer;        /* Saved EBP (frame pointer). *
-
-    /* Pushed by the CPU.
-       These are the interrupted task's saved registers. *
-    void (*eip) (void);         /* Next instruction to execute. *
-    uint16_t cs, :16;           /* Code segment for eip. *
-    uint32_t eflags;            /* Saved CPU flags. *
-    void *esp;                  /* Saved stack pointer. *
-    uint16_t ss, :16;           /* Data segment for esp. *
-  };
-*/
+struct lock lock_filesys;
 
 int pop_arg(int **ustack_);
 bool valid_user_addr(void *uaddr);
 
 bool sys_halt(int *stack);
 bool sys_exit(int *stack);
-bool sys_exec(int *stack);
-bool sys_wait(int *stack);
-bool sys_create(int *stack);
-bool sys_remove(int *stack);
-bool sys_open(int *stack);
-bool sys_filesize(int *stack);
-bool sys_read(int *stack);
-bool sys_write(int *stack);
+bool sys_exec(int *stack, uint32_t *eax);
+bool sys_wait(int *stack, uint32_t *eax);
+bool sys_create(int *stack, uint32_t *eax);
+bool sys_remove(int *stack, uint32_t *eax);
+bool sys_open(int *stack, uint32_t *eax);
+bool sys_filesize(int *stack, uint32_t *eax);
+bool sys_read(int *stack, uint32_t *eax);
+bool sys_write(int *stack, uint32_t *eax);
 bool sys_seek(int *stack);
-bool sys_tell(int *stack);
+bool sys_tell(int *stack, uint32_t *eax);
 bool sys_close(int *stack);
 
 static void syscall_handler (struct intr_frame *);
@@ -69,15 +35,18 @@ void
 syscall_init (void) 
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
+  lock_init (&lock_filesys);
 }
 
 static void
 syscall_handler (struct intr_frame *f) 
 {
+  bool success = false;
 	int *ustack =  f->esp;
+	uint32_t *ueax   =  &(f->eax);
 
 	int syscall_num = pop_arg(&ustack);
-	bool success = false;
+	
 	switch(syscall_num) {
 		case SYS_HALT:
 			success = sys_halt(ustack);  
@@ -86,34 +55,34 @@ syscall_handler (struct intr_frame *f)
 			success = sys_exit(ustack);                   
 			break; 
     case SYS_EXEC:                   
-			success = sys_exec(ustack);
+			success = sys_exec(ustack, ueax);
 			break; 
     case SYS_WAIT: 
-    	success = sys_wait(ustack);                  
+    	success = sys_wait(ustack, ueax);                  
 			break; 
     case SYS_CREATE:  
-    	success = sys_create(ustack);
+    	success = sys_create(ustack, ueax);
 			break; 
     case SYS_REMOVE:                 
-			success = sys_remove(ustack);
+			success = sys_remove(ustack, ueax);
 			break; 
     case SYS_OPEN:                   
-			success = sys_open(ustack);
+			success = sys_open(ustack, ueax);
 			break; 
     case SYS_FILESIZE:               
-			success = sys_filesize(ustack);
+			success = sys_filesize(ustack, ueax);
 			break; 
     case SYS_READ:                 
-			success = sys_read(ustack);
+			success = sys_read(ustack, ueax);
 			break; 
     case SYS_WRITE:                 
-			success = sys_write(ustack);
+			success = sys_write(ustack, ueax);
 			break; 
     case SYS_SEEK:                   
 			success = sys_seek(ustack);
 			break; 
     case SYS_TELL:                  
-			success = sys_tell(ustack);
+			success = sys_tell(ustack, ueax);
 			break; 
     case SYS_CLOSE:                  
 			success = sys_close(ustack);
@@ -167,7 +136,6 @@ valid_user_addr(void *uaddr)
 }
 
 
-
 /* Halt the operating system. */
 bool sys_halt(int *stack)
 {
@@ -184,7 +152,7 @@ bool sys_exit(int *stack)
 }
 
 /* Start another process. */
-bool sys_exec(int *stack)
+bool sys_exec(int *stack, uint32_t *eax)
 {
 	const char *cmdline = (char *) pop_arg(&stack);
 	/* Change once implemented */
@@ -192,7 +160,7 @@ bool sys_exec(int *stack)
 }
 
 /* Wait for a child process to die. */
-bool sys_wait(int *stack)
+bool sys_wait(int *stack, uint32_t *eax)
 {
 	int pid = pop_arg(&stack);
 	/* Change once implemented */
@@ -200,95 +168,203 @@ bool sys_wait(int *stack)
 }
 
 /* Create a file. */
-bool sys_create(int *stack)
+bool sys_create(int *stack, uint32_t *eax)
 {
 	const char *file = (const char *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
 
-	/* Change once implemented */
-	return false;	
+  if (!valid_user_addr((void *)file))
+    return false;
+    
+  bool result;
+  lock_acquire(&lock_filesys);
+  result = filesys_create (file, (off_t) size);
+  lock_release(&lock_filesys);
+  
+  /* push syscall result to the user program */
+  memcpy(eax, &result, sizeof(uint32_t));
+  
+	return true;	
 }
 
 /* Delete a file. */
-bool sys_remove(int *stack)
+bool sys_remove(int *stack, uint32_t *eax)
 {
 	const char *file = (const char *) pop_arg(&stack);
-
-	/* Change once implemented */
-	return false;		
+	
+	if (!valid_user_addr((void *)file))
+    return false;
+   
+  bool result;
+  lock_acquire(&lock_filesys);
+  result = filesys_remove (file);
+  lock_release(&lock_filesys);
+  
+  /* push syscall result to the user program */
+  memcpy(eax, &result, sizeof(uint32_t));
+  
+	return true;		
 }
 
 /* Open a file. */
-bool sys_open(int *stack)
+bool sys_open(int *stack, uint32_t *eax)
 {
-	const char *file = (const char *) pop_arg(&stack);
-	/* Change once implemented */
-	return false;		
+	const char *name = (const char *) pop_arg(&stack);
+
+  if (!valid_user_addr((void *)name))
+    return false;
+
+  printf("file name: %s\n", name);
+    
+	struct file *f;
+	
+	lock_acquire(&lock_filesys);
+	f = filesys_open (name);
+	lock_release(&lock_filesys);
+	
+	printf("file ptr: %p\n", f);
+	
+	/* obtain a new file descriptor from the thread's table */
+	int fd = -1;
+	if (f != NULL)
+	  fd = thread_fd_set(f);
+	  
+	printf("file desc: %d\n", fd);
+	
+	/* push syscall result to the user program */
+  memcpy(eax, &fd, sizeof(uint32_t));
+	
+	return true;		
 }
 
 /* Obtain a file's size. */
-bool sys_filesize(int *stack)
+bool sys_filesize(int *stack, uint32_t *eax)
 {
 	int fd = pop_arg(&stack);
-	/* Change once implemented */
-	return false;		
+	
+	struct file *file = thread_fd_get(fd);
+	if (file == NULL)
+	  return false;
+	
+	uint32_t file_len;
+	
+	lock_acquire(&lock_filesys);
+	file_len = (uint32_t) file_length (file);
+	lock_release(&lock_filesys);
+	
+	/* push syscall result to the user program */
+  memcpy(eax, &file_len, sizeof(uint32_t));
+	
+	return true;		
 }
 
  /* Read from a file. */
-bool sys_read(int *stack)
+bool sys_read(int *stack, uint32_t *eax)
 {
 	int fd = pop_arg(&stack);
 	void *buffer = (void *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
-	/* Change once implemented */
-	return false;		
+	
+	if (!valid_user_addr((void *)buffer))
+	  return false;
+	  
+	struct file *file = thread_fd_get(fd);
+	if (file == NULL)
+	  return false;
+	
+	lock_acquire(&lock_filesys);
+	int bytes_read = (int) file_read (file, buffer, (off_t) size);
+	lock_release(&lock_filesys);
+	
+	/* push syscall result to the user program */
+  memcpy(eax, &bytes_read, sizeof(uint32_t));
+	
+	return true;		
 }
 
 /* Write to a file. */
-bool sys_write(int *stack)
+bool sys_write(int *stack, uint32_t *eax)
 {
 	int fd = pop_arg(&stack);
 	const void *buffer = (const void *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
-	/*printf(" <- In sys_write() fd: %d, buf: %s, size: %d -> \n",fd,(char *)buffer,size);*/
 
-	if (!valid_user_addr(buffer)) 
-			return false;
+	if (!valid_user_addr((void *)buffer))
+	  return false;
 
-	/* Change once implemented */
-	if (fd = 1) {
+  /* check for console descriptor */
+	if (fd == 1) {
 		putbuf(buffer,size);
 		return true;
 	}
-	return false;		
+	
+	struct file *file = thread_fd_get(fd);
+	if (file == NULL)
+	  return false;
+	
+	lock_acquire(&lock_filesys);
+	int bytes_written = (int) file_write (file, buffer, (off_t) size); 
+	lock_release(&lock_filesys);	
+	
+	/* push syscall result to the user program */
+  memcpy(eax, &bytes_written, sizeof(uint32_t));
+	
+	return true;		
 }
 
 /* Change position in a file. */
 bool sys_seek(int *stack)
 {
 	int fd = pop_arg(&stack);
-	unsigned position = pop_arg(&stack);
-	/* Change once implemented */
-	return false;		
+	unsigned new_pos = pop_arg(&stack);
+	
+	struct file *file = thread_fd_get(fd);
+	if (file == NULL)
+	  return false;
+
+	lock_acquire(&lock_filesys);
+	file_seek (file, (off_t) new_pos);
+	lock_release(&lock_filesys);
+	
+	return true;		
 }
 
 /* Report current position in a file. */
-bool sys_tell(int *stack)
+bool sys_tell(int *stack, uint32_t *eax)
 {
 	int fd = pop_arg(&stack);
-	/* Change once implemented */
-	return false;		
+	
+	struct file *file = thread_fd_get(fd);
+	if (file == NULL)
+	  return false;
+	
+	unsigned pos;
+	
+	lock_acquire(&lock_filesys);
+	pos = (unsigned) file_tell (file); 
+	lock_release(&lock_filesys);
+	
+	/* push syscall result to the user program */
+  memcpy(eax, &pos, sizeof(uint32_t));
+	
+	return true;		
 }
 
 /* Close a file. */
 bool sys_close(int *stack)
 {
 	int fd = pop_arg(&stack);
-	/* Change once implemented */
-	return false;	
+	
+	struct file *file = thread_fd_get(fd);
+	if (file == NULL)
+	  return false;
+	
+	lock_acquire(&lock_filesys);
+	file_close (file);
+	lock_release(&lock_filesys);
+	
+	thread_fd_clear(fd);
+	
+	return true;	
 }
-
-
-
-
 

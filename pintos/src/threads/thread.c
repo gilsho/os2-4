@@ -283,6 +283,7 @@ thread_exit (void)
   ASSERT (!intr_context ());
 
 #ifdef USERPROG
+  thread_fd_destroy();
   process_exit ();
 #endif
 
@@ -463,6 +464,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+  
+#ifdef USERPROG
+  thread_fd_init(t);
+#endif
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
@@ -582,3 +587,60 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+#ifdef USERPROG
+void
+thread_fd_init(struct thread *t)
+{
+  struct file** fd_table = t->fd_table;
+  
+  int i;
+  for (i=0; i<MAX_THREAD_OPEN_FILES; i++)
+    fd_table[i] = NULL;
+}
+
+void
+thread_fd_destroy()
+{
+  struct file** fd_table = thread_current()->fd_table;
+  
+  int i;
+  for (i=2; i<MAX_THREAD_OPEN_FILES; i++) {
+    if (fd_table[i] != NULL) {
+      file_close (fd_table[i]); 
+      fd_table[i] = NULL;
+    }
+  }
+}
+
+int 
+thread_fd_set(struct file *file)
+{
+  struct file** fd_table = thread_current()->fd_table;
+  
+  int i;
+  for (i=2; i<MAX_THREAD_OPEN_FILES; i++) {
+    if (fd_table[i] == NULL) {
+      fd_table[i] = file;
+      return i;
+    }
+  }
+  return -1;
+}
+
+struct file* 
+thread_fd_get(int fd)
+{
+  ASSERT(fd >= 2 && fd < MAX_THREAD_OPEN_FILES);
+  
+  return thread_current()->fd_table[fd];
+}
+
+void 
+thread_fd_clear(int fd)
+{
+  ASSERT(fd >= 2 && fd < MAX_THREAD_OPEN_FILES);
+  
+  thread_current()->fd_table[fd] = NULL;
+}
+#endif
