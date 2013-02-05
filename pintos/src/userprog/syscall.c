@@ -138,20 +138,21 @@ valid_user_addr(void *uaddr)
 
 
 /* Halt the operating system. */
-bool sys_halt(int *stack)
+bool sys_halt(int *stack UNUSED)
 {
+	printf("halt current: %s\n", thread_current()->name);
 	shutdown_power_off();
-	return false;	
+	return true;	
 }
 
 /* Terminate this process. */
 bool sys_exit(int *stack)
 {
 	int status = pop_arg(&stack);
+	process_close(status);
+	thread_exit();
 	
-	/* thread_current()->exit_code = status; */
-	
-	return false;		
+	return true;		
 }
 
 /* Start another process. */
@@ -159,11 +160,11 @@ bool sys_exec(int *stack, uint32_t *eax)
 {
 	const char *cmdline = (char *) pop_arg(&stack);
 	
-	tid_t tid = process_execute (cmdline);
+	pid_t pid = process_execute (cmdline);
 	
-	printf("in sys_exec, tid: %d\n", (int) tid);
+	printf("in sys_exec, pid: %d\n", (int) pid);
 	/* push syscall result to the user program */
-  memcpy(eax, &tid, sizeof(uint32_t));
+  	memcpy(eax, &pid, sizeof(pid_t));
 	
 	return true;	
 }
@@ -171,12 +172,13 @@ bool sys_exec(int *stack, uint32_t *eax)
 /* Wait for a child process to die. */
 bool sys_wait(int *stack, uint32_t *eax)
 {
-	int pid = pop_arg(&stack);
+	pid_t child_pid = pop_arg(&stack);
 	
-	/* get child_tid from pid */
-	/* process_wait (child_tid) */
+	int status = process_wait (child_pid);
+
+	memcpy(eax, &status, sizeof(int));
 	
-	return false;		
+	return true;		
 }
 
 /* Create a file. */

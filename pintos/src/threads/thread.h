@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #ifdef USERPROG
+#include "userprog/process.h"
 #include "filesys/file.h"
 #endif
 
@@ -26,6 +27,8 @@ enum thread_status
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
+
+
 #define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
 
 /* Thread priorities. */
@@ -103,15 +106,10 @@ struct thread
     struct list_elem elem;              /* List element. */
 
 #ifdef USERPROG
-    /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
     
     struct file *exec_file;             /* Executable file. */
-    
-    struct list child_list;             /* List of child threads. */
-    struct list_elem child_elem;        /* List element for child threads 
-                                           list of parent thread. */
-    int exit_code;                      /* Exit status code. */
+    pid_t pid;
     
     struct file * fd_table[MAX_THREAD_OPEN_FILES]; /* File desc. table */
 #endif
@@ -119,6 +117,8 @@ struct thread
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
+
+
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

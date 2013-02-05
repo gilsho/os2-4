@@ -26,18 +26,38 @@ void push_stack_int(void **stack_, int val);
 void push_stack_char(void **stack_, char c);
 void parse_args(const char *args, void **esp, char **file_name);
 
+static struct process_info * process_info_table;
+static int curr_pid;
+
+
+struct process_info
+{
+  int exit_code;
+  bool has_been_waited;
+  bool is_alive;
+  struct semaphore sema;
+  pid_t parent_pid;
+};
+
 struct process_init_data
 {
   char *args;
   struct semaphore sema;
   bool load_status;
+  pid_t parent_pid;
 };
+
+void process_init(void){
+  process_info_table = palloc_get_page (0);
+  curr_pid = 0;
+
+}
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
-tid_t
+pid_t
 process_execute (const char *args) 
 {
   char *args_copy;
@@ -54,22 +74,24 @@ process_execute (const char *args)
   init_data.args = args_copy;
   sema_init(&(init_data.sema), 0);
   init_data.load_status = false;
+  init_data.parent_pid = thread_current()->pid;
 
   /* Create a new thread to execute FILE_NAME. */
   /*tid = thread_create (args, PRI_DEFAULT, start_process, args_copy); */
   tid = thread_create (args, PRI_DEFAULT, start_process, (void *)&init_data);
-  
-  sema_down(&(init_data.sema));
+  if(tid != TID_ERROR)
+    printf("GOd name: %s, pid: %d\n", thread_current()->name, thread_current()->pid);
+    sema_down(&(init_data.sema));
   
   printf("in process_execute, load_status: %d\n", (int)init_data.load_status);
   
-  if (tid == TID_ERROR)
-    palloc_free_page (args_copy); 
+  palloc_free_page (args_copy); 
     
-  if (!init_data.load_status)
-    tid = TID_ERROR;
+  if (!init_data.load_status){
+    return -1;
+  }
 
-  return tid;
+  return curr_pid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -97,9 +119,22 @@ start_process (void * init_data_)
   sema_up(&(init_data->sema));
   
   /* If load failed, quit. */
-  palloc_free_page (args);
-  if (!success) 
+
+  if (success){
+    struct process_info info;
+    info.exit_code = -1;
+    info.parent_pid = init_data->parent_pid;
+    info.is_alive = true;
+    info.has_been_waited = false;
+    sema_init(&(info.sema), 0);
+    curr_pid++;
+    printf("curr_pid: %d, name: %s\n", curr_pid, thread_current()->name);
+    thread_current()->pid = curr_pid;
+    memcpy(&(process_info_table[curr_pid]), &info, sizeof(struct process_info));
+  }else{
     thread_exit ();
+  }
+    
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -118,14 +153,45 @@ start_process (void * init_data_)
    been successfully called for the given TID, returns -1
    immediately, without waiting.
 
+   struct process_info
+{
+  int exit_code;
+  bool has_been_waited;
+  bool is_alive;
+  struct semaphore sema;
+  pid_t parent_id;
+};
+
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (pid_t child_pid) 
 {
-  while (true);
-  
-  return -1;
+  if(child_pid < 0 || child_pid > curr_pid)return -1;
+
+  struct process_info child_info = process_info_table[child_pid];
+  if(child_info.has_been_waited) return -1;
+
+  pid_t parent_pid = thread_current()->pid;
+
+  if(child_info.parent_pid != parent_pid)return -1;
+
+  /* Now we know that we have a valid child */
+
+  /* Check if child is dead */
+  if(child_info.is_alive && parent_pid != -1){
+    sema_down(&(child_info.sema));
+  }
+  child_info.has_been_waited = true;
+  return child_info.exit_code;
+
+}
+
+void
+process_close(int status){
+  pid_t pid = thread_current()->pid;
+  struct process_info info = process_info_table[pid];
+  info.exit_code = status;
 }
 
 /* Free the current process's resources. */
@@ -134,6 +200,11 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+  struct process_info info = process_info_table[cur->pid];
+  printf("exit code: %d, has waited: %d, is_alive: %d, parent id: %d\n", info.exit_code, info.has_been_waited, info.is_alive, info.parent_pid);
+  printf("curr pid: %d, curr name: %s\n", cur->pid, cur->name);
+  info.is_alive = false;
+  if(info.parent_pid != -1)sema_up(&(info.sema));
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -152,7 +223,7 @@ process_exit (void)
       pagedir_destroy (pd);
     }
   
-  printf ("%s: exit(%d)\n", cur->name, cur->exit_code);
+  printf ("%s: exit(%d)\n", cur->name, info.exit_code);
 }
 
 /* Sets up the CPU for running user code in the current
