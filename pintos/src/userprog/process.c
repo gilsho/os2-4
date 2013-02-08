@@ -46,6 +46,7 @@ struct process_init_data
   struct semaphore sema;
   bool load_status;
   pid_t parent_pid;
+  pid_t child_pid;
 };
 
 void process_init(void){
@@ -75,6 +76,7 @@ process_execute (const char *args)
 {
   char *args_copy;
   tid_t tid;
+  int child_pid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
@@ -89,6 +91,7 @@ process_execute (const char *args)
   init_data.load_status = false;
   init_data.parent_pid = thread_current()->pid;
   
+  
   char tmp[strnlen(args_copy, PGSIZE)];
   strlcpy (tmp, args_copy, PGSIZE);
   
@@ -97,6 +100,8 @@ process_execute (const char *args)
   thread_name = strtok_r (tmp, " ", &save_ptr);
   ASSERT(thread_name != NULL);
   
+  /* printf("PARENT: curr_pid: %d, name: %s\n", thread_current()->pid, thread_current()->name); */
+  
   struct process_info info;
   info.exit_code = 0;
   info.parent_pid = thread_current()->pid;
@@ -104,21 +109,21 @@ process_execute (const char *args)
   info.has_been_waited = false;
   lock_acquire(&lock_pid);
   curr_pid++;
-  /*printf("curr_pid: %d, name: %s\n", curr_pid, thread_current()->name);*/
-  thread_current()->pid = curr_pid;
+  init_data.child_pid = curr_pid;
   memcpy(&(process_info_table[curr_pid]), &info, sizeof(struct process_info));
   sema_init(&(process_info_table[curr_pid].sema), 0);
+  child_pid = curr_pid;
   lock_release(&lock_pid);
     
   tid = thread_create (thread_name, PRI_DEFAULT, start_process, (void *)&init_data);
 
+  /* printf("tid: %d\n", tid); */
+  
   if(tid != TID_ERROR){
-
-    /*printf("God name: %s, pid: %d\n", thread_current()->name, thread_current()->pid);*/
     sema_down(&(init_data.sema));
   }
   
-  /*printf("in process_execute, load_status: %d\n", (int)init_data.load_status);*/
+  /* printf("process_execute, load_status: %d name: %s\n", (int)init_data.load_status, thread_current()->name); */
   
   palloc_free_page (args_copy); 
     
@@ -127,7 +132,7 @@ process_execute (const char *args)
     return -1;
   }
 
-  return curr_pid;
+  return child_pid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -152,6 +157,9 @@ start_process (void * init_data_)
   /*printf("in start_process, success: %d\n", (int)success);*/
   
   init_data->load_status = success;
+  thread_current()->pid = init_data->child_pid;
+  
+  /* printf("CHILD pid: %d name: %s\n", thread_current()->pid, thread_current()->name); */
   /* printf("~~~~IN start_process load_status: %d\n", (int)init_data->load_status); */
   
   sema_up(&(init_data->sema));
@@ -195,7 +203,7 @@ start_process (void * init_data_)
 int
 process_wait (pid_t child_pid) 
 {
-  /*printf("in process_wait, current: %s, child_pid: %d\n", thread_current()->name, child_pid);*/
+  /* printf("in process_wait, current: %s, child_pid: %d\n", thread_current()->name, child_pid); */
   if(child_pid < 0 || child_pid > curr_pid)return -1;
 
   struct process_info *child_info = &(process_info_table[child_pid]);
@@ -203,10 +211,11 @@ process_wait (pid_t child_pid)
 
   pid_t parent_pid = thread_current()->pid;
 
+  /* printf("child_info->parent_pid = %d\n", child_info->parent_pid); */
   if(child_info->parent_pid != parent_pid)return -1;
 
   /* Now we know that we have a valid child */
-  /*printf("in process_wait...\n");*/
+  /* printf("in process_wait...\n"); */
   /* Check if child is dead */
   if(child_info->is_alive){
     sema_down(&(child_info->sema));
