@@ -11,6 +11,8 @@
 #include "devices/shutdown.h"
 #include <string.h>
 
+#define FILENAME_MAX 14
+
 struct lock lock_filesys;
 
 int pop_arg(int **ustack_);
@@ -45,7 +47,7 @@ syscall_handler (struct intr_frame *f)
   bool success = false;
 	int *ustack =  f->esp;
 	uint32_t *ueax   =  &(f->eax);
-
+  
 	int syscall_num = pop_arg(&ustack);
 	
 	switch(syscall_num) {
@@ -107,7 +109,7 @@ syscall_handler (struct intr_frame *f)
 
 	//if failure occured, kill process gracefully
 	if (!success) {
-
+      process_close(-1);
   		thread_exit ();
   	}
 }
@@ -116,6 +118,12 @@ syscall_handler (struct intr_frame *f)
 int 
 pop_arg(int **ustack)
 {
+  if (!valid_user_addr((*ustack)+4))
+  {
+    process_close(-1);
+    thread_exit();
+  }
+  
 	int arg = (**ustack);
 	(*ustack)++;
 	return arg;
@@ -157,16 +165,33 @@ bool sys_exit(int *stack)
 	return true;		
 }
 
+bool valid_str(char *s, int max_len)
+{
+  int c;
+  for (c = 0; c < max_len; c++)
+  {
+    if (!valid_user_addr(s+c) )
+      return false;
+    if (s[c] == '\0')
+      return true;
+  }
+  return false;
+}
+
 /* Start another process. */
 bool sys_exec(int *stack, uint32_t *eax)
 {
 	const char *cmdline = (char *) pop_arg(&stack);
+		
+	if (!valid_str(cmdline, PGSIZE))
+	  return false;
 	
 	pid_t pid = process_execute (cmdline);
 	
-	/*printf("in sys_exec, pid: %d\n", (int) pid);*/
+	/* printf("in sys_exec, pid: %d\n", (int) pid); */
+	  
 	/* push syscall result to the user program */
-  	memcpy(eax, &pid, sizeof(pid_t));
+  memcpy(eax, &pid, sizeof(pid_t));
 	
 	return true;	
 }
@@ -191,11 +216,15 @@ bool sys_create(int *stack, uint32_t *eax)
 
   if (!valid_user_addr((void *)file))
     return false;
-    
-  bool result;
-  lock_acquire(&lock_filesys);
-  result = filesys_create (file, (off_t) size);
-  lock_release(&lock_filesys);
+  
+  int result = 0;
+  int fname_len = strnlen (file, FILENAME_MAX+1);
+  if (fname_len > 0 && fname_len <= FILENAME_MAX)
+  {
+    lock_acquire(&lock_filesys);
+    result = (int) filesys_create (file, (off_t) size);
+    lock_release(&lock_filesys);
+  }
   
   /* push syscall result to the user program */
   memcpy(eax, &result, sizeof(uint32_t));
@@ -211,9 +240,9 @@ bool sys_remove(int *stack, uint32_t *eax)
 	if (!valid_user_addr((void *)file))
     return false;
    
-  bool result;
+  int result;
   lock_acquire(&lock_filesys);
-  result = filesys_remove (file);
+  result = (int)filesys_remove (file);
   lock_release(&lock_filesys);
   
   /* push syscall result to the user program */
@@ -279,7 +308,7 @@ bool sys_read(int *stack, uint32_t *eax)
 	  return false;
 	  
 	struct file *file = thread_fd_get(fd);
-	if (file == NULL)
+	if (file == NULL || fd == 1)
 	  return false;
 	
 	lock_acquire(&lock_filesys);
@@ -309,7 +338,7 @@ bool sys_write(int *stack, uint32_t *eax)
 	}
 	
 	struct file *file = thread_fd_get(fd);
-	if (file == NULL)
+	if (file == NULL || fd == 0)
 	  return false;
 	
 	lock_acquire(&lock_filesys);
@@ -366,7 +395,7 @@ bool sys_close(int *stack)
 	int fd = pop_arg(&stack);
 	
 	struct file *file = thread_fd_get(fd);
-	if (file == NULL)
+	if (file == NULL || fd < 2)
 	  return false;
 	
 	lock_acquire(&lock_filesys);

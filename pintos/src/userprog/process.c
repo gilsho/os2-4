@@ -18,6 +18,7 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/synch.h"
+#include "threads/malloc.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -28,8 +29,8 @@ void parse_args(const char *args, void **esp, char **file_name);
 
 static struct process_info * process_info_table;
 static int curr_pid;
+static struct lock lock_pid;
 
-static struct semaphore sema_g;
 struct process_info
 {
   int exit_code;
@@ -49,8 +50,20 @@ struct process_init_data
 
 void process_init(void){
   process_info_table = palloc_get_page (0);
+  
+  struct process_info main_info;
+  main_info.exit_code       = 0;
+  main_info.has_been_waited = false;
+  main_info.is_alive        = true;
+  main_info.parent_pid      = -1;
+  
+  memcpy(&(process_info_table[0]), &main_info, sizeof(struct process_info));  
+  sema_init(&(process_info_table[0].sema),0);
+
+  lock_init(&lock_pid);
+  lock_acquire(&lock_pid);
   curr_pid = 0;
-  sema_init(&sema_g, 0);
+  lock_release(&lock_pid);
 }
 
 /* Starts a new thread running a user program loaded from
@@ -75,10 +88,30 @@ process_execute (const char *args)
   sema_init(&(init_data.sema), 0);
   init_data.load_status = false;
   init_data.parent_pid = thread_current()->pid;
+  
+  char tmp[strnlen(args_copy, PGSIZE)];
+  strlcpy (tmp, args_copy, PGSIZE);
+  
+  char *thread_name = NULL;
+  char *save_ptr;
+  thread_name = strtok_r (tmp, " ", &save_ptr);
+  ASSERT(thread_name != NULL);
+  
+  struct process_info info;
+  info.exit_code = 0;
+  info.parent_pid = thread_current()->pid;
+  info.is_alive = true;
+  info.has_been_waited = false;
+  lock_acquire(&lock_pid);
+  curr_pid++;
+  /*printf("curr_pid: %d, name: %s\n", curr_pid, thread_current()->name);*/
+  thread_current()->pid = curr_pid;
+  memcpy(&(process_info_table[curr_pid]), &info, sizeof(struct process_info));
+  sema_init(&(process_info_table[curr_pid].sema), 0);
+  lock_release(&lock_pid);
+    
+  tid = thread_create (thread_name, PRI_DEFAULT, start_process, (void *)&init_data);
 
-  /* Create a new thread to execute FILE_NAME. */
-  /*tid = thread_create (args, PRI_DEFAULT, start_process, args_copy); */
-  tid = thread_create (args, PRI_DEFAULT, start_process, (void *)&init_data);
   if(tid != TID_ERROR){
 
     /*printf("God name: %s, pid: %d\n", thread_current()->name, thread_current()->pid);*/
@@ -89,6 +122,7 @@ process_execute (const char *args)
   
   palloc_free_page (args_copy); 
     
+  /* printf("~~~~IN process_execute load_status: %d\n", (int)init_data.load_status); */
   if (!init_data.load_status){
     return -1;
   }
@@ -118,22 +152,14 @@ start_process (void * init_data_)
   /*printf("in start_process, success: %d\n", (int)success);*/
   
   init_data->load_status = success;
+  /* printf("~~~~IN start_process load_status: %d\n", (int)init_data->load_status); */
+  
   sema_up(&(init_data->sema));
   
   /* If load failed, quit. */
 
-  if (success){
-    struct process_info info;
-    info.exit_code = -1;
-    info.parent_pid = init_data->parent_pid;
-    info.is_alive = true;
-    info.has_been_waited = false;
-    //sema_init(&(info.sema), 0);
-    curr_pid++;
-    /*printf("curr_pid: %d, name: %s\n", curr_pid, thread_current()->name);*/
-    thread_current()->pid = curr_pid;
-    memcpy(&(process_info_table[curr_pid]), &info, sizeof(struct process_info));
-  }else{
+  if (!success){
+    process_close(-1);
     thread_exit ();
   }
     
@@ -172,30 +198,30 @@ process_wait (pid_t child_pid)
   /*printf("in process_wait, current: %s, child_pid: %d\n", thread_current()->name, child_pid);*/
   if(child_pid < 0 || child_pid > curr_pid)return -1;
 
-  struct process_info child_info = process_info_table[child_pid];
-  if(child_info.has_been_waited) return -1;
+  struct process_info *child_info = &(process_info_table[child_pid]);
+  if(child_info->has_been_waited) return -1;
 
   pid_t parent_pid = thread_current()->pid;
 
-  if(child_info.parent_pid != parent_pid)return -1;
+  if(child_info->parent_pid != parent_pid)return -1;
 
   /* Now we know that we have a valid child */
   /*printf("in process_wait...\n");*/
   /* Check if child is dead */
-  if(child_info.is_alive){
-    sema_down(&sema_g);
+  if(child_info->is_alive){
+    sema_down(&(child_info->sema));
   }
-  child_info.has_been_waited = true;
+  child_info->has_been_waited = true;
   /*printf("leaving process_wait...\n");*/
-  return child_info.exit_code;
+  return child_info->exit_code;
 
 }
 
 void
 process_close(int status){
   pid_t pid = thread_current()->pid;
-  struct process_info info = process_info_table[pid];
-  info.exit_code = status;
+  /* printf("process_close -> name: %s pid: %d status: %d\n", thread_current()->name, (int) pid, status); */
+  process_info_table[pid].exit_code = status;
 }
 
 /* Free the current process's resources. */
@@ -204,7 +230,6 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
-  int exit_code = 0;
   
   /*printf("In process exit, current: %s\n", cur->name);*/
 
@@ -224,18 +249,18 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-  if(cur->pid != -1){
-    struct process_info info = process_info_table[cur->pid];
-    exit_code = info.exit_code;
 
-    info.is_alive = false;
-    /*printf("exit code: %d, has waited: %d, is_alive: %d, parent id: %d\n", info.exit_code, info.has_been_waited, info.is_alive, info.parent_pid);*/
-    /*printf("curr pid: %d, curr name: %s\n", cur->pid, cur->name);*/
-    
-  }
   
-  printf ("%s: exit(%d)\n", cur->name, exit_code);
-  if(cur->pid != -1)sema_up(&sema_g);
+
+  struct process_info *info = &(process_info_table[cur->pid]);
+  info->is_alive = false;
+    /*printf("exit code: %d, has waited: %d, is_alive: %d, parent id: %d\n", info.exit_code, info.has_been_waited, info.is_alive, info.parent_pid);*/
+  /*printf("curr pid: %d, curr name: %s\n", cur->pid, cur->name); */
+  
+  printf ("%s: exit(%d)\n", cur->name, info->exit_code);
+  
+  file_close(cur->exec_file);
+  sema_up(&(info->sema));
 }
 
 /* Sets up the CPU for running user code in the current
@@ -419,7 +444,7 @@ load (const char *args, void (**eip) (void), void **esp)
   if (!setup_stack (esp))
     goto done;
 
-  /* Parse command line arguments and push them onto user task */
+  /* Parse command line arguments and push them onto user stack */
   char *file_name;
   parse_args(args,esp,&file_name);
   

@@ -470,7 +470,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
-  t->pid = -1;
+  t->pid = 0;
   
 #ifdef USERPROG
   t->exec_file = NULL;
@@ -639,16 +639,16 @@ thread_fd_set(struct file *file)
 struct file* 
 thread_fd_get(int fd)
 {
-  ASSERT(fd >= 2 && fd < MAX_THREAD_OPEN_FILES);
+  if(fd >= 0 && fd < MAX_THREAD_OPEN_FILES) 
+    return thread_current()->fd_table[fd];
   
-  return thread_current()->fd_table[fd];
+  return NULL;
 }
 
 void 
 thread_fd_clear(int fd)
 {
-  ASSERT(fd >= 2 && fd < MAX_THREAD_OPEN_FILES);
-  
-  thread_current()->fd_table[fd] = NULL;
+  if(fd >= 2 && fd < MAX_THREAD_OPEN_FILES)  
+    thread_current()->fd_table[fd] = NULL;
 }
 #endif
