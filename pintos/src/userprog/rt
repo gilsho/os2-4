@@ -1,0 +1,3 @@
+rm -f tests/userprog/$1.output
+rm -f tests/userprog/$1.result
+make tests/userprog/$1.result
