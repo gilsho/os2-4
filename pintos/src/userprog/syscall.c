@@ -107,6 +107,7 @@ syscall_handler (struct intr_frame *f)
 
 	//if failure occured, kill process gracefully
 	if (!success) {
+
   		thread_exit ();
   	}
 }
@@ -140,7 +141,7 @@ valid_user_addr(void *uaddr)
 /* Halt the operating system. */
 bool sys_halt(int *stack UNUSED)
 {
-	printf("halt current: %s\n", thread_current()->name);
+	/*printf("halt current: %s\n", thread_current()->name);*/
 	shutdown_power_off();
 	return true;	
 }
@@ -151,6 +152,7 @@ bool sys_exit(int *stack)
 	int status = pop_arg(&stack);
 	process_close(status);
 	thread_exit();
+	/*printf("in sys_exit, current thread: %s, status: %d\n", thread_current()->name, status);*/
 	
 	return true;		
 }
@@ -162,7 +164,7 @@ bool sys_exec(int *stack, uint32_t *eax)
 	
 	pid_t pid = process_execute (cmdline);
 	
-	printf("in sys_exec, pid: %d\n", (int) pid);
+	/*printf("in sys_exec, pid: %d\n", (int) pid);*/
 	/* push syscall result to the user program */
   	memcpy(eax, &pid, sizeof(pid_t));
 	
@@ -173,7 +175,7 @@ bool sys_exec(int *stack, uint32_t *eax)
 bool sys_wait(int *stack, uint32_t *eax)
 {
 	pid_t child_pid = pop_arg(&stack);
-	
+	/*printf("In sys_wait: current: %s, child_pid: %d\n", thread_current()->name, child_pid);*/
 	int status = process_wait (child_pid);
 
 	memcpy(eax, &status, sizeof(int));

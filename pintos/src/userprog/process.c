@@ -29,7 +29,7 @@ void parse_args(const char *args, void **esp, char **file_name);
 static struct process_info * process_info_table;
 static int curr_pid;
 
-
+static struct semaphore sema_g;
 struct process_info
 {
   int exit_code;
@@ -50,7 +50,7 @@ struct process_init_data
 void process_init(void){
   process_info_table = palloc_get_page (0);
   curr_pid = 0;
-
+  sema_init(&sema_g, 0);
 }
 
 /* Starts a new thread running a user program loaded from
@@ -79,11 +79,13 @@ process_execute (const char *args)
   /* Create a new thread to execute FILE_NAME. */
   /*tid = thread_create (args, PRI_DEFAULT, start_process, args_copy); */
   tid = thread_create (args, PRI_DEFAULT, start_process, (void *)&init_data);
-  if(tid != TID_ERROR)
-    printf("GOd name: %s, pid: %d\n", thread_current()->name, thread_current()->pid);
+  if(tid != TID_ERROR){
+
+    /*printf("God name: %s, pid: %d\n", thread_current()->name, thread_current()->pid);*/
     sema_down(&(init_data.sema));
+  }
   
-  printf("in process_execute, load_status: %d\n", (int)init_data.load_status);
+  /*printf("in process_execute, load_status: %d\n", (int)init_data.load_status);*/
   
   palloc_free_page (args_copy); 
     
@@ -113,7 +115,7 @@ start_process (void * init_data_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (args, &if_.eip, &if_.esp);
 
-  printf("in start_process, success: %d\n", (int)success);
+  /*printf("in start_process, success: %d\n", (int)success);*/
   
   init_data->load_status = success;
   sema_up(&(init_data->sema));
@@ -126,9 +128,9 @@ start_process (void * init_data_)
     info.parent_pid = init_data->parent_pid;
     info.is_alive = true;
     info.has_been_waited = false;
-    sema_init(&(info.sema), 0);
+    //sema_init(&(info.sema), 0);
     curr_pid++;
-    printf("curr_pid: %d, name: %s\n", curr_pid, thread_current()->name);
+    /*printf("curr_pid: %d, name: %s\n", curr_pid, thread_current()->name);*/
     thread_current()->pid = curr_pid;
     memcpy(&(process_info_table[curr_pid]), &info, sizeof(struct process_info));
   }else{
@@ -167,6 +169,7 @@ start_process (void * init_data_)
 int
 process_wait (pid_t child_pid) 
 {
+  /*printf("in process_wait, current: %s, child_pid: %d\n", thread_current()->name, child_pid);*/
   if(child_pid < 0 || child_pid > curr_pid)return -1;
 
   struct process_info child_info = process_info_table[child_pid];
@@ -177,12 +180,13 @@ process_wait (pid_t child_pid)
   if(child_info.parent_pid != parent_pid)return -1;
 
   /* Now we know that we have a valid child */
-
+  /*printf("in process_wait...\n");*/
   /* Check if child is dead */
-  if(child_info.is_alive && parent_pid != -1){
-    sema_down(&(child_info.sema));
+  if(child_info.is_alive){
+    sema_down(&sema_g);
   }
   child_info.has_been_waited = true;
+  /*printf("leaving process_wait...\n");*/
   return child_info.exit_code;
 
 }
@@ -200,11 +204,9 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
-  struct process_info info = process_info_table[cur->pid];
-  printf("exit code: %d, has waited: %d, is_alive: %d, parent id: %d\n", info.exit_code, info.has_been_waited, info.is_alive, info.parent_pid);
-  printf("curr pid: %d, curr name: %s\n", cur->pid, cur->name);
-  info.is_alive = false;
-  if(info.parent_pid != -1)sema_up(&(info.sema));
+  int exit_code = 0;
+  
+  /*printf("In process exit, current: %s\n", cur->name);*/
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -222,8 +224,18 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+  if(cur->pid != -1){
+    struct process_info info = process_info_table[cur->pid];
+    exit_code = info.exit_code;
+
+    info.is_alive = false;
+    /*printf("exit code: %d, has waited: %d, is_alive: %d, parent id: %d\n", info.exit_code, info.has_been_waited, info.is_alive, info.parent_pid);*/
+    /*printf("curr pid: %d, curr name: %s\n", cur->pid, cur->name);*/
+    
+  }
   
-  printf ("%s: exit(%d)\n", cur->name, info.exit_code);
+  printf ("%s: exit(%d)\n", cur->name, exit_code);
+  if(cur->pid != -1)sema_up(&sema_g);
 }
 
 /* Sets up the CPU for running user code in the current
