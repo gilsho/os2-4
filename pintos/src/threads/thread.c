@@ -470,7 +470,6 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
-  t->pid = 0;
   
 #ifdef USERPROG
   t->exec_file = NULL;

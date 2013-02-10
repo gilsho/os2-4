@@ -109,9 +109,9 @@ struct thread
     uint32_t *pagedir;                  /* Page directory. */
     
     struct file *exec_file;             /* Executable file. */
-    pid_t pid;
-    
     struct file * fd_table[MAX_THREAD_OPEN_FILES]; /* File desc. table */
+    
+    struct process_info *process_info;
 #endif
 
     /* Owned by thread.c. */
