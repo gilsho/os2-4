@@ -20,9 +20,6 @@
 #include "threads/synch.h"
 #include "threads/malloc.h"
 
-static int curr_pid;
-static struct lock lock_pid;
-
 struct process_info
 {
   pid_t pid;
@@ -51,7 +48,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 void push_stack(void **stack_, void *data, size_t n);
 void push_stack_int(void **stack_, int val);
 void push_stack_char(void **stack_, char c);
-void parse_args(const char *args, void **esp, char **file_name);
+bool parse_args(const char *args, void **esp, char **file_name);
 
 /* Invoke function 'func' on all threads, passing along 'aux'.
    This function must be called with interrupts off. */
@@ -63,12 +60,6 @@ bool initialize_process_info(struct process_info **child_info_ptr);
 
 void process_init(void)
 {
-  
-  /* Initialize the pid counter */
-  lock_init(&lock_pid);
-  lock_acquire(&lock_pid);
-  curr_pid = 0;
-  lock_release(&lock_pid);
   
   struct process_info *main_info;  
   bool result = initialize_process_info(&main_info);
@@ -138,10 +129,10 @@ process_execute (const char *args)
   palloc_free_page (args_copy); 
   
   if (!init_data.load_status){
-    return -1;
+    return TID_ERROR;
   }
 
-  return child_info->pid;
+  return tid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -166,7 +157,9 @@ start_process (void * init_data_)
   /*printf("in start_process, success: %d\n", (int)success);*/
   
   init_data->load_status = success;
-  thread_current()->process_info = init_data->info;
+  struct thread *t = thread_current();
+  t->process_info = init_data->info;
+  t->process_info->pid = (pid_t) t->tid;
   
   /* printf("CHILD pid: %d name: %s\n", thread_current()->pid, thread_current()->name); */
   /* printf("~~~~IN start_process load_status: %d\n", (int)init_data->load_status); */
@@ -377,11 +370,11 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
                           bool writable);
 
-
 /* Pushes data of length n bytes onto a user stack. assumes the 
    stack is always pointing to last byte of valid data. The
    function will maintain this invariant.*/
-void push_stack(void **stack_, void *data, size_t n)
+void 
+push_stack(void **stack_, void *data, size_t n)
 {
   char **stack = (char **)stack_;
   *stack -= n;
@@ -390,14 +383,16 @@ void push_stack(void **stack_, void *data, size_t n)
 
 /* pushes an integer value onto a user stack. see push_stack
    for implementation details */
-void push_stack_int(void **stack_, int val)
+void 
+push_stack_int(void **stack_, int val)
 {
   push_stack(stack_,&val,sizeof(int));
 }
 
 /* Pushes a character onto a user stack. see push_stack for
    implementation details. */
-void push_stack_char(void **stack_, char c)
+void 
+push_stack_char(void **stack_, char c)
 {
   push_stack(stack_,&c,sizeof(char));
 }
@@ -407,10 +402,17 @@ void push_stack_char(void **stack_, char c)
    the arguments on the user stack in preparation for a "int main(argv,argc)"
    call. Function sets file_name to point to the executable file name 
    located on the user stack.*/
-void parse_args(const char *args, void **esp, char **file_name)
+
+#define MAX_PADDING 4
+
+bool 
+parse_args(const char *args, void **esp, char **file_name)
 {
+
   /* +1 is to include the null terminating character */
   int arglen = strnlen(args,PGSIZE) + 1;
+  if (arglen > PGSIZE-MAX_PADDING)
+    return false;
   push_stack(esp,(void *)args,arglen);
   
   char *args_stack = *esp;
@@ -434,7 +436,11 @@ void parse_args(const char *args, void **esp, char **file_name)
     argc++;
   }
 
-  /* what if stack exceeds full page ? */
+  /* check that setting up the stack will not exceed page boundary */
+
+  int *page_bottom =  (int *)pg_round_down (esp);
+  if ((int *)esp - (argc + 4) < page_bottom) 
+      return false;
 
   push_stack_int(esp,0);
   for (i = argc-1; i >= 0; i--) {
@@ -446,6 +452,8 @@ void parse_args(const char *args, void **esp, char **file_name)
   push_stack_int(esp,(int) *esp);
   push_stack_int(esp,argc);
   push_stack_int(esp,0);
+
+  return true;
 
 }
 
@@ -475,8 +483,9 @@ load (const char *args, void (**eip) (void), void **esp)
 
   /* Parse command line arguments and push them onto user stack */
   char *file_name;
-  parse_args(args,esp,&file_name);
-  
+  if (!parse_args(args,esp,&file_name))
+    goto done;
+
   file = filesys_open (file_name);
   if (file == NULL) 
     {
@@ -805,11 +814,6 @@ initialize_process_info(struct process_info **child_info_ptr)
   child_info->is_alive        = true;
   child_info->is_parent_alive = true;
   child_info->has_been_waited = false;
-  
-  lock_acquire(&lock_pid);
-  curr_pid++;
-  child_info->pid = curr_pid;
-  lock_release(&lock_pid);
   
   lock_init(&(child_info->lock));
   cond_init(&(child_info->cond));

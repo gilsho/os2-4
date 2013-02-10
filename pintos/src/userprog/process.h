@@ -1,8 +1,6 @@
 #ifndef USERPROG_PROCESS_H
 #define USERPROG_PROCESS_H
 
-
-
 typedef int pid_t;
 
 void process_close(int status);

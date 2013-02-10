@@ -118,7 +118,7 @@ syscall_handler (struct intr_frame *f)
 int 
 pop_arg(int **ustack)
 {
-  if (!valid_user_addr((*ustack)+4))
+  if (!valid_user_addr((*ustack)+1))
   {
     process_close(-1);
     thread_exit();
@@ -304,7 +304,10 @@ bool sys_read(int *stack, uint32_t *eax)
 	void *buffer = (void *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
 	
-	if (!valid_user_addr((void *)buffer))
+	void *buffer_end = ((char *) buffer) + size;
+
+	if (!valid_user_addr(buffer) ||
+		!valid_user_addr(buffer_end))
 	  return false;
 	  
 	struct file *file = thread_fd_get(fd);
@@ -328,7 +331,10 @@ bool sys_write(int *stack, uint32_t *eax)
 	const void *buffer = (const void *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
 
-	if (!valid_user_addr((void *)buffer))
+	void *buffer_end = ((char *) buffer) + size;
+
+	if (!valid_user_addr(buffer) ||
+		!valid_user_addr(buffer_end))
 	  return false;
 
   /* check for console descriptor */
