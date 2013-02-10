@@ -57,32 +57,29 @@ void parse_args(const char *args, void **esp, char **file_name);
    This function must be called with interrupts off. */
 void process_foreach (struct list *list, process_action_func *func, void *aux);
 void set_parent_dead(struct process_info *info, void* aux UNUSED);
-void free_dead_process(struct process_info *info, void* aux UNUSED);
-struct process_info * process_get_info(struct process_info *parent_info, pid_t child_pid); 
+struct process_info * process_get_info(struct process_info *parent_info, pid_t child_pid);
+void process_free_children (struct process_info* info); 
+bool initialize_process_info(struct process_info **child_info_ptr);
 
-void process_init(void){
+void process_init(void)
+{
   
-  struct process_info *main_info = malloc(sizeof(struct process_info));
-  
-  ASSERT(main_info != NULL);
-    
-  main_info->pid             = 0;
-  lock_init(&main_info->lock);
-  main_info->exit_code       = 0;
-  main_info->has_been_waited = false;
-  main_info->is_alive        = true;
-  main_info->is_parent_alive = false; /* main thread has no parent */
-  
-  cond_init(&(main_info->cond));
-  list_init(&(main_info->children));
-  
-  struct thread *t = thread_current();
-  t->process_info = main_info;
-
+  /* Initialize the pid counter */
   lock_init(&lock_pid);
   lock_acquire(&lock_pid);
   curr_pid = 0;
   lock_release(&lock_pid);
+  
+  struct process_info *main_info;  
+  bool result = initialize_process_info(&main_info);
+  
+  ASSERT(result);
+  ASSERT(main_info != NULL);
+  
+  main_info->is_parent_alive = false; /* main thread has no parent */
+  
+  struct thread *t = thread_current();
+  t->process_info = main_info;
 }
 
 /* Starts a new thread running a user program loaded from
@@ -94,7 +91,6 @@ process_execute (const char *args)
 {
   char *args_copy;
   tid_t tid;
-  int child_pid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
@@ -117,32 +113,12 @@ process_execute (const char *args)
   thread_name = strtok_r (tmp, " ", &save_ptr);
   ASSERT(thread_name != NULL);
   
-  printf("PARENT: curr_pid: %d, name: %s\n", thread_current()->process_info->pid, thread_current()->name);
-  
-  struct process_info *child_info = NULL;
-  child_info = malloc(sizeof(struct process_info));
-  
-  if (child_info == NULL)
+  struct process_info *child_info;
+  if (!initialize_process_info(&child_info))
     return -1;
-  
-  child_info->exit_code       = 0;
-  lock_init(&(child_info->lock));
-  child_info->is_alive        = true;
-  child_info->is_parent_alive = true;
-  child_info->has_been_waited = false;
-  
-  lock_acquire(&lock_pid);
-  curr_pid++;
-  child_info->pid = curr_pid;
-  lock_release(&lock_pid);
-   
-  printf("[process_execute] info.pid of child: %d\n", child_info->pid);
-  child_pid = child_info->pid;  
-  
-  cond_init(&(child_info->cond));
-  list_init(&(child_info->children));
-  
+
   init_data.info = child_info;
+  
   
   /* add the new child to current processes' children */
   struct process_info *info = thread_current()->process_info;
@@ -150,15 +126,14 @@ process_execute (const char *args)
 
   tid = thread_create (thread_name, PRI_DEFAULT, start_process, (void *)&init_data);
 
-  printf("child tid: %d\n", tid);
+  /* printf("child tid: %d\n", tid); */
   
   if(tid != TID_ERROR)
   {
-    printf("about to sema_down: %s\n", thread_current()->name);
     sema_down(&(init_data.sema));
   }
   
-  printf("process_execute, load_status: %d name: %s\n", (int)init_data.load_status, thread_current()->name);
+  /* printf("process_execute, load_status: %d name: %s\n", (int)init_data.load_status, thread_current()->name); */
   
   palloc_free_page (args_copy); 
   
@@ -166,7 +141,7 @@ process_execute (const char *args)
     return -1;
   }
 
-  return child_pid;
+  return child_info->pid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -174,7 +149,6 @@ process_execute (const char *args)
 static void
 start_process (void * init_data_)
 {
-  printf("start process 1, name: %s\n", thread_current()->name);
   struct process_init_data *init_data = (struct process_init_data *)init_data_;
   char *args = init_data->args;
 
@@ -189,7 +163,6 @@ start_process (void * init_data_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (args, &if_.eip, &if_.esp);
 
-  printf("start process 2, name: %s, success: %d\n", thread_current()->name, (int)success);
   /*printf("in start_process, success: %d\n", (int)success);*/
   
   init_data->load_status = success;
@@ -198,7 +171,8 @@ start_process (void * init_data_)
   /* printf("CHILD pid: %d name: %s\n", thread_current()->pid, thread_current()->name); */
   /* printf("~~~~IN start_process load_status: %d\n", (int)init_data->load_status); */
   
-  printf("about to sema_up: %s\n", thread_current()->name);
+  /* printf("about to sema_up: %s\n", thread_current()->name); */
+  
   sema_up(&(init_data->sema));
   
   /* If load failed, quit. */
@@ -231,31 +205,29 @@ start_process (void * init_data_)
 int
 process_wait (pid_t child_pid) 
 {
-  /* printf("in process_wait, current: %s, child_pid: %d\n", thread_current()->name, child_pid); */
-
   struct process_info *child_info = 
     process_get_info(thread_current()->process_info,child_pid);
   
-  if (child_info != NULL)
+  if (child_info == NULL)
     return -1;
   
   int result = -1;
   lock_acquire(&(child_info->lock));
+  
   if(!child_info->has_been_waited && child_info->is_alive) {
     cond_wait(&(child_info->cond),&(child_info->lock));
   }
-  child_info->has_been_waited = true;
   result = child_info->exit_code;
+  child_info->has_been_waited = true;
+  child_info->exit_code = -1;
   lock_release(&(child_info->lock));
   
-  /*printf("leaving process_wait...\n");*/
   return result;
-
 }
 
+/* Set the exit code for the current process */
 void
 process_close(int status){
-  /* printf("process_close -> name: %s pid: %d status: %d\n", thread_current()->name, (int) pid, status); */
   struct process_info *info = thread_current()->process_info;
   lock_acquire(&(info->lock));
   info->exit_code = status;
@@ -268,8 +240,6 @@ process_exit (void)
 {
   struct thread *t = thread_current ();
   uint32_t *pd;
-  
-  /*printf("In process exit, current: %s\n", cur->name);*/
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -296,18 +266,19 @@ process_exit (void)
 
   /* kill the current process */
   info->is_alive = false;
-  
+ 
   /* tell all children that we are dead */
   process_foreach (&(info->children), &set_parent_dead, NULL);
   
   /* free all dead children */
-  process_foreach (&(info->children), &free_dead_process, NULL);
+  process_free_children (info);
   
   printf ("%s: exit(%d)\n", t->name, info->exit_code);
   
   /* free self if parent is dead */
   if (!info->is_parent_alive)
   {
+    /* printf("parent is dead. name: %s\n", t->name); */
     /* no race conditions since parent is dead */
     lock_release(&(info->lock));
     free(info);
@@ -317,10 +288,8 @@ process_exit (void)
   {
     cond_signal(&(info->cond),&(info->lock));
     lock_release(&(info->lock));
-  }  
-  
-    /*printf("exit code: %d, has waited: %d, is_alive: %d, parent id: %d\n", info.exit_code, info.has_been_waited, info.is_alive, info.parent_pid);*/
-  /*printf("curr pid: %d, curr name: %s\n", cur->pid, cur->name); */
+  } 
+
 }
 
 /* Sets up the CPU for running user code in the current
@@ -763,23 +732,17 @@ process_foreach (struct list *list, process_action_func *func, void *aux)
        e = list_next (e))
     {
       struct process_info *info = list_entry (e, struct process_info,         child_elem);
-      lock_acquire(&(info->lock));
+      
       func (info, aux);
-      lock_release(&(info->lock));
     }
 }
 
 void
 set_parent_dead(struct process_info *info, void* aux UNUSED)
 {
+  lock_acquire(&(info->lock));
   info->is_parent_alive = false;
-}
-
-void
-free_dead_process(struct process_info *info, void* aux UNUSED)
-{
-  if (!info->is_alive)
-    free(info);
+  lock_release(&(info->lock));
 }
 
 struct process_info *
@@ -796,4 +759,62 @@ process_get_info(struct process_info *parent_info,pid_t child_pid)
   }
   return NULL;
   
+}
+
+/* Invoke function 'func' on all threads, passing along 'aux'.
+   This function must be called with interrupts off. */
+void
+process_free_children (struct process_info* parent_info)
+{
+  struct list *list = &(parent_info->children);
+  struct list_elem *e;
+  struct list_elem *ne;
+
+  e = list_begin (list);
+  while ( e != list_end (list) )
+  {
+    struct process_info *child_info = 
+      list_entry (e, struct process_info, child_elem);
+    
+    ne = list_next (e);
+    
+    lock_acquire(&(child_info->lock)); 
+    if (!child_info->is_alive)
+    {
+      list_remove(e);
+      free(child_info);
+    } 
+    else 
+      lock_release(&(child_info->lock));
+    e = ne;    
+  }
+}
+
+/* Initialize the process info struct for a new process. */
+bool
+initialize_process_info(struct process_info **child_info_ptr)
+{
+  struct process_info *child_info = *child_info_ptr;
+  
+  child_info = malloc(sizeof(struct process_info));
+  
+  if (child_info == NULL)
+    return false;
+  
+  child_info->exit_code       = 0;
+  child_info->is_alive        = true;
+  child_info->is_parent_alive = true;
+  child_info->has_been_waited = false;
+  
+  lock_acquire(&lock_pid);
+  curr_pid++;
+  child_info->pid = curr_pid;
+  lock_release(&lock_pid);
+  
+  lock_init(&(child_info->lock));
+  cond_init(&(child_info->cond));
+  list_init(&(child_info->children));
+  
+  *child_info_ptr = child_info;
+  return true;
 }

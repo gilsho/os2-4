@@ -134,6 +134,7 @@ main (void)
   run_actions (argv);
 
   /* Finish up. */
+  printf("main exiting.\n");
   shutdown ();
   thread_exit ();
 }
