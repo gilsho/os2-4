@@ -232,9 +232,7 @@ we designate this process as being waited on, so that if the parent process trie
 >> loading.  How does your code ensure this?  How is the load
 >> success/failure status passed back to the thread that calls "exec"?
 
-init_data.semaphore. we down it in execute, up it in start_process. it works no matter what order these operations are performed (so the child process can up it before parent downs it).
-
-inside the init_data data structure that is passed by reference to the child thread, we include a load_status variable that allows the child process to communicate this value back to the parent thread.
+Before we load a new process, we pass it a pointer to a struct of initialization data. This struct has an initialized semaphore and a boolean success variable. The semaphore is initialized to value zero, and after the parent process calls load, it tries to down the semaphore, thus blocking. The child process updates the boolean on the init struct after it has loaded it's process, and then calls sema_up on the semaphore. The parent can now proceed, and return from process exec with the new pid of the child, or with an error code if the load was a failure.
 
 >> B8: Consider parent process P with child process C.  How do you
 >> ensure proper synchronization and avoid race conditions when P
@@ -243,18 +241,9 @@ inside the init_data data structure that is passed by reference to the child thr
 >> terminates without waiting, before C exits?  After C exits?  Are
 >> there any special cases?
 
-Just before P waits P blocks on a condition variable that is associated with C (C's process info structure) and C signals P when he exits.
+When a parent process P calls wait(C) on a child, it first checks to see if C is 'alive', i.e. has not yet exited. If C is not alive, then P simply retrieves the exit code of C and returns. If C is alive, then P blocks on a condition variable associated with the child's process info struct. When child C exits, it will signal this condition variable to wake up its parent P who is waiting on that condition. Parent P can then retrieve the exit value of C and return. 
 
-When C exits, he sets a flag in his process info struct that indicates that he is no longer alive. P, when trying to wait on C, will read this value and avoid blocking, and read and return the child's exit code immediately. 
-
-Deallocation procedure in process exit: 
-In our implementation each process destroys his own meta data 
-and his childrens meta datam
-stored in a process info struct. A parent will free its resources if and only if his parent P has terminated. If when he terminates his parent his still alive, then his parent will free his resources when his parent terminates.
-
-Either the parent finished first or the child finishes first, but by making sure that a parent frees the resources of this "dead" children when it exits and that the child frees its parent's resources when the child exits, we have covered all possible scenarios.
-
-All freeing of resources occur when processes exit, whether or not the process has waited has no bearing whatsoever. 
+All deallocation of memory happens in process_exit. When a process exits, it first must free the memory of its children who have already exited. It will then check to see if it's parent is still alive, and if not, it will free its own memory. In this way, we account for all cases: either P exits first, in which case it will not free the memory of C (since C is still alive). In this case, C is responsible for freeing its own memory when it exits (which it will do because it will see that its parent is already dead). The other case is that C exits first, in which case it will set itself to be dead, but NOT free its own memory (since its parent is still alive). When P finally exits later, it will free the memory of the dead C process. 
 
 
 ---- RATIONALE ----
@@ -262,27 +251,20 @@ All freeing of resources occur when processes exit, whether or not the process h
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
 
-Simplicity. option 2 would have required us to modify exception code much. This would have introduced a whole new world of pain that we didn't want to deal with.
+We chose to verify the validity of a user-provided pointer before dereferencing it. The other option (just checking that pointer is below PHYS_BASE) would require us to modify the code in exception.c, which we felt added an unnecessary level of complexity to our system. With our approach, we are keeping the bounds checking all in one place.
 
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
 
-Each process uses a dynamically allocated linked list to store its open files, along with their file_descriptors. 
+Each process uses a dynamically allocated linked list to store its open files, along with their file_descriptors. The advantage here is that a process can only have access to its own open files, and there is no danger that it will access, and potentially corrupt, the open file state of another process. It also makes it easy to add open files, as you simply append the new file to the end of a list. Since it is dynamically allocated, we don't need to place a cap on the number of open files that a process can have.
+Moreover, we generate file descriptors using a global counter, which means that a file descriptor is not tied to the pointer to the file. This design protects against malicious user programs which might try to dereference a file descriptor to get access to restricted parts of the kernel.
 
-Even though each process can only access its own open files, we use a global counter to generate the file descriptors just in case two prcocess decide to share information. ....
-
-advantage: easy to add open files. no collisions between process over file descriptors.
-dynamically allocated storage. no limit on number of files to open.
-file descriptors are not pointers to the file structures. This protects against malicious user programs that will try to give the kernel a fabricated file descriptor and use that to gain access to restricted parts of memory.
-
-disadvantage:
-- one global lock each time a process tries to open a file all process must block. we figured this is not too bad since there is already a global lock tha restricts access to file system one at a time.
-O(n) run time for doing things with files. have to look through linked list
+A disadvantage is that, since we are using a global counter to create file descriptors, we need to acquire a global lock every time a process tries to open a file. However we are not preventing any concurrency, since a file would have to acquire the file system lock when it opened a file anyway. Another disadvantage is that doing a lookup on an open file takes O(n) time, since one has to traverse the entire linked list of open files.
 
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
 
-we haven't changed the mapping. we figured that unlike file descriptors, tid do not expose sensitive addresses so it was safe to make them visible to the user and as identifier for processes as well, since in pintos a process consists of one thread. 
+We have not changed the identity mapping. Unlike file descriptors, tid do not expose sensitive addresses so it is safe to simply cast the tid to a pid and return that to the user. This works because, in pintos, one process corresponds to one thread.
 
 			   SURVEY QUESTIONS
 			   ================
