@@ -107,7 +107,7 @@ struct thread
 
 #ifdef USERPROG
     uint32_t *pagedir;                  /* Page directory. */
-    struct process_info *process_info;
+    struct process_info *process_info;  /* Process information */
 #endif
 
     /* Owned by thread.c. */

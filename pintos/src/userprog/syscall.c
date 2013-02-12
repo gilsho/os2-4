@@ -10,14 +10,17 @@
 #include "filesys/file.h"
 #include "devices/shutdown.h"
 #include <string.h>
+#include "devices/input.h"
 
 #define FILENAME_MAX 14
 
 extern struct lock lock_filesys;
 
+void syscall_init (void);
+static void syscall_handler (struct intr_frame *);
+
 int pop_arg(int **ustack_);
 bool valid_user_addr(void *uaddr);
-bool valid_user_page(void *uaddr);
 bool valid_str(const char *s, unsigned max_len);
 
 bool sys_halt(int *stack);
@@ -34,7 +37,7 @@ bool sys_seek(int *stack);
 bool sys_tell(int *stack, uint32_t *eax);
 bool sys_close(int *stack);
 
-static void syscall_handler (struct intr_frame *);
+
 
 void
 syscall_init (void) 
@@ -124,7 +127,8 @@ syscall_handler (struct intr_frame *f)
 int 
 pop_arg(int **ustack)
 {
-  if (!valid_user_addr((*ustack)+1))
+  if ( !valid_user_addr((*ustack)) ||
+       !valid_user_addr((*ustack)+1) )
   {
     process_close(-1);
     thread_exit();
@@ -152,25 +156,6 @@ valid_user_addr(void *uaddr)
 
 	return true;
 }
-
-
-/* Halt the operating system. */
-bool sys_halt(int *stack UNUSED)
-{
-	shutdown_power_off();
-	return true;	
-}
-
-/* Terminate this process. */
-bool sys_exit(int *stack)
-{
-	int status = pop_arg(&stack);
-	process_close(status);
-	thread_exit();
-	
-	return true;		
-}
-
 
 /* Validate the user memory addresses for the given
    character string of unknown length. Assume that it
@@ -207,6 +192,24 @@ valid_str(const char *s, unsigned max_len)
   return false;
 }
 
+/* Halt the operating system. */
+bool sys_halt(int *stack UNUSED)
+{
+	shutdown_power_off();
+	return true;	
+}
+
+/* Terminate this process. */
+bool sys_exit(int *stack)
+{
+	int status = pop_arg(&stack);
+	process_close(status);
+	thread_exit();
+	
+	return true;		
+}
+
+
 /* Start another process. */
 bool sys_exec(int *stack, uint32_t *eax)
 {
@@ -237,18 +240,19 @@ bool sys_wait(int *stack, uint32_t *eax)
 /* Create a file. */
 bool sys_create(int *stack, uint32_t *eax)
 {
-	const char *file = (const char *) pop_arg(&stack);
+	const char *file_name = (const char *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
 
-  if (!valid_user_addr((void *)file))
+  /*if (!valid_user_addr((void *)file))*/
+  if (!valid_str(file_name, PGSIZE))
     return false;
   
   int result = 0;
-  int fname_len = strnlen (file, FILENAME_MAX+1);
+  int fname_len = strnlen (file_name, FILENAME_MAX+1);
   if (fname_len > 0 && fname_len <= FILENAME_MAX)
   {
     lock_acquire(&lock_filesys);
-    result = (int) filesys_create (file, (off_t) size);
+    result = (int) filesys_create (file_name, (off_t) size);
     lock_release(&lock_filesys);
   }
   
@@ -261,14 +265,15 @@ bool sys_create(int *stack, uint32_t *eax)
 /* Delete a file. */
 bool sys_remove(int *stack, uint32_t *eax)
 {
-	const char *file = (const char *) pop_arg(&stack);
+	const char *file_name = (const char *) pop_arg(&stack);
 	
-	if (!valid_user_addr((void *)file))
+	/*if (!valid_user_addr((void *)file))*/
+	if (!valid_str(file_name, PGSIZE))
     return false;
    
   int result;
   lock_acquire(&lock_filesys);
-  result = (int)filesys_remove (file);
+  result = (int)filesys_remove (file_name);
   lock_release(&lock_filesys);
   
   /* push syscall result to the user program */
@@ -282,7 +287,7 @@ bool sys_open(int *stack, uint32_t *eax)
 {
 	const char *name = (const char *) pop_arg(&stack);
 
-  if (!valid_user_addr((void *)name))
+  if (!valid_str(name, PGSIZE))
     return false;
     
 	struct file *f;
@@ -326,35 +331,56 @@ bool sys_filesize(int *stack, uint32_t *eax)
  /* Read user data from a file. */
 bool sys_read(int *stack, uint32_t *eax)
 {
+  bool result = true;
 	int fd = pop_arg(&stack);
-	void *buffer = (void *) pop_arg(&stack);
+	char *buffer = (void *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
 	
-	void *buffer_end = ((char *) buffer) + size;
+	char *buffer_end = ((char *) buffer) + size;
 
 	if (!valid_user_addr(buffer) ||
 		!valid_user_addr(buffer_end))
 	  return false;
 	  
-	struct file *file = process_get_file_desc(fd);
-	if (file == NULL || fd == 1)
-	  return false;
+	unsigned bytes_read = 0;  
 	  
-	/* read from STDIN */
-	
-	lock_acquire(&lock_filesys);
-	int bytes_read = (int) file_read (file, buffer, (off_t) size);
-	lock_release(&lock_filesys);
-	
+	/* special case: read from STDIN */
+	if (fd == 0) 
+	{
+	  uint8_t c;	  
+	  while (bytes_read < size)
+	  {
+	    c = input_getc ();
+	    memcpy(&(buffer[bytes_read]), &c, sizeof(uint8_t));
+	    bytes_read++;
+	  }
+	}
+	else
+	{
+	  /* check for invalid file or STDOUT */
+	  struct file *file = process_get_file_desc(fd);
+	  if (file == NULL || fd == 1)
+	  {
+	    result = false;
+	  }
+	  else /* valid file found */
+	  {
+	    lock_acquire(&lock_filesys);
+	    bytes_read = (int) file_read (file, (void *)buffer, (off_t) size);
+	    lock_release(&lock_filesys);
+    }
+  }
+  	
 	/* push syscall result to the user program */
   memcpy(eax, &bytes_read, sizeof(uint32_t));
 	
-	return true;		
+	return result;		
 }
 
 /* Write to a file. */
 bool sys_write(int *stack, uint32_t *eax)
 {
+  bool result = true;
 	int fd = pop_arg(&stack);
 	const void *buffer = (const void *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
@@ -365,24 +391,32 @@ bool sys_write(int *stack, uint32_t *eax)
 		!valid_user_addr(buffer_end))
 	  return false;
 
-  /* check for console descriptor */
+	unsigned bytes_written = 0;
+
+  /* special case: write to STDOUT */
 	if (fd == 1) {
 		putbuf(buffer,size);
-		return true;
+		bytes_written = size;
 	}
-	
-	struct file *file = process_get_file_desc(fd);
-	if (file == NULL || fd == 0)
-	  return false;
-	
-	lock_acquire(&lock_filesys);
-	int bytes_written = (int) file_write (file, buffer, (off_t) size); 
-	lock_release(&lock_filesys);	
+	else {
+	  /* check for invalid file or STDIN */
+	  struct file *file = process_get_file_desc(fd);
+	  if (file == NULL || fd == 0)
+	  {
+	    result = false;
+	  }
+	  else /* valid file found */
+	  {
+		  lock_acquire(&lock_filesys);
+	    bytes_written = (int) file_write (file, buffer, (off_t) size); 
+	    lock_release(&lock_filesys);	
+	  }
+	}
 	
 	/* push syscall result to the user program */
   memcpy(eax, &bytes_written, sizeof(uint32_t));
 	
-	return true;		
+	return result;		
 }
 
 /* Change position in a file. */
@@ -428,6 +462,8 @@ bool sys_close(int *stack)
 {
 	int fd = pop_arg(&stack);
 	
+	/* return false is file not found or 
+	   user tries to close STDIN/STDOUT */
 	struct file *file = process_get_file_desc(fd);
 	if (file == NULL || fd < 2)
 	  return false;

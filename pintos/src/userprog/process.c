@@ -21,39 +21,62 @@
 #include "threads/malloc.h"
 
 
-struct lock lock_filesys;
+struct lock lock_filesys; /* a coarse global lock restricting access 
+                            to the file system */
 
+/* This struct contains all the information related to a process */
 struct process_info
 {
-  pid_t pid;
-  struct lock lock;
-  int exit_code;
-  bool has_been_waited;
-  bool is_alive;
-  bool is_parent_alive;
-  struct condition cond;
-  struct list_elem child_elem;        /* elem in parent list */
-  struct list children;               /* list of child processes (struct process_info) */
-  struct list fd_table;   
-  struct file *exec_file;             /* Executable file. */
-  int cur_fd;
+  pid_t pid;						/* unique process id (same as thread tid) */
+  struct lock lock;			/* lock for concurrent access to this info struct */
+  int exit_code;				/* the status code set by the process during exit, 
+                           only valid if is_alive is false */
+  bool has_been_waited;	/* indicates if the parent process has waited on 
+                           this child process already */
+  bool is_alive;				/* indicates whether this process has exited */
+  bool is_parent_alive;	/* indicates whether the parent has exited. used for
+                           memory management by the process when exiting. */
+  struct condition cond;			/* used to implement the sys_wait system call */
+  struct list_elem child_elem;   /* elem in parent process' child list */
+  struct list children;          /* list of this process' children */
+  struct list fd_list;   /* list of file descriptors and associated files
+                             used by this process. */
+  struct file *exec_file;    /* a pointer to this process' executable
+                                file that its thread is running. used to deny
+                                write access to the file while the process is 
+                                running  */ 
+  int next_fd;              /* fd counter localized to this process only */
 };
+
+
+/* This struct is used to pass more than one variable between a parent process' process_execute call and a child process' start_process function. */
 
 struct process_init_data
 {
-  char *args;
-  struct semaphore sema;
-  bool load_status;
-  struct process_info *info;
+  char *args;					/* string containing name of executable and args 
+                         of/to the program. */
+  struct semaphore sema;		/* synchronization mechanism enabling parent 
+                               process to wait for the child to finish
+                               loading its executable */
+  bool load_status;				/* represents if load of child process was  
+                             successful. used to signal to parent process. */
+  struct process_info *info;	/* the child process' information struct 
+                                 initialized by its parent process */
 };
 
+/* This struct is an element in a linked list of file descriptors 
+   mapping to open files. */
 struct file_desc
 {
-  int fd;
-  struct file *file;
-  struct list_elem elem;
+  int fd;						      /* the file descriptor associated with the file */
+  struct file *file;			/* a handle to the file struct associated with fd */
+  struct list_elem elem;	/* a list elem used to embed this struct within a 
+                            process' list of active files */
 };
 
+
+
+/* skip STDIN(0) and STDOUT(1) */
 #define FILE_DESCRIPTOR_START 2
 
 
@@ -65,8 +88,6 @@ void push_stack_int(void **stack_, int val);
 void push_stack_char(void **stack_, char c);
 bool parse_args(const char *args, void **esp, char **file_name);
 
-/* Invoke function 'func' on all threads, passing along 'aux'.
-   This function must be called with interrupts off. */
 void process_foreach (struct list *list, process_action_func *func, void *aux);
 void set_parent_dead(struct process_info *info, void* aux UNUSED);
 struct process_info * process_get_info(struct process_info *parent_info, pid_t child_pid);
@@ -75,11 +96,12 @@ bool initialize_process_info(struct process_info **child_info_ptr);
 void process_set_init_data(struct process_init_data *init_data, char *args_copy);
 void close_open_files(struct process_info *info);
 void release_children_locks(struct process_info *info, void* aux UNUSED);
+
+
 /* Initializes the process control block.
   Sets process info for the main thread */
 void process_init(void)
 {
-  
   struct process_info *main_info;  
   bool result = initialize_process_info(&main_info);
   
@@ -90,7 +112,6 @@ void process_init(void)
   
   struct thread *t = thread_current();
   t->process_info = main_info;
-
 }
 
 /* Initialize data needed to start a process. The sema and load_status are used
@@ -128,15 +149,16 @@ process_execute (const char *args)
   thread_name = strtok_r (tmp, " ", &save_ptr);
   ASSERT(thread_name != NULL);
 
+  /* setup the data struct to pass to start_process */
   struct process_init_data init_data;
   process_set_init_data(&init_data, args_copy);
   
+  /* initialize the child process' info struct */
   struct process_info *child_info;
   if (!initialize_process_info(&child_info))
     return -1;
 
   init_data.info = child_info;
-  
   
   /* add the new child to current processes' children */
   struct process_info *info = thread_current()->process_info;
@@ -155,7 +177,7 @@ process_execute (const char *args)
     return TID_ERROR;
   }
 
-  return tid;
+  return (pid_t) tid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -241,12 +263,11 @@ process_close(int status){
 }
 
 /* Close all files currently opened by the exiting thread */
-
 void close_open_files(struct process_info *info){
    /* close all open files */
   struct list_elem *e;
 
-  for (e = list_begin (&(info->fd_table)); e != list_end (&(info->fd_table));) {
+  for (e = list_begin (&(info->fd_list)); e != list_end (&(info->fd_list));) {
     struct list_elem *ne;
     ne = list_next (e);
     list_remove(e);
@@ -285,7 +306,7 @@ process_exit (void)
 
   struct process_info *info = t->process_info;  
   
-  /* Close any files opened by this thread */
+  /* Close any files opened by this process */
   close_open_files(info);
 
   /* allow writes to the executable */
@@ -297,16 +318,17 @@ process_exit (void)
   if(!lock_held_by_current_thread(&info->lock))
     lock_acquire(&(info->lock));
 
-  /* kill the current process */
+  /* mark the current process as dead */
   info->is_alive = false;
  
-  /* Release all children locks that you might be holding when you exit */
+  /* Release all children's locks that this process might 
+     be holding upon exiting. */
   process_foreach(&(info->children), &release_children_locks, NULL);
 
-  /* tell all children that we are dead */
+  /* tell all children that the current (parent) process is dead */
   process_foreach (&(info->children), &set_parent_dead, NULL);
   
-  /* free all dead children */
+  /* free all dead child processes */
   process_free_children (info);
   
   printf ("%s: exit(%d)\n", t->name, info->exit_code);
@@ -324,7 +346,7 @@ process_exit (void)
     cond_signal(&(info->cond),&(info->lock));
     lock_release(&(info->lock));
   } 
-
+  
 }
 
 /* Sets up the CPU for running user code in the current
@@ -521,8 +543,6 @@ load (const char *args, void (**eip) (void), void **esp, struct file **file)
   /* Set up stack. */
   if (!setup_stack (esp))
     goto done;
-
-
 
   /* Parse command line arguments and push them onto user stack */
   char *file_name;
@@ -778,8 +798,8 @@ install_page (void *upage, void *kpage, bool writable)
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
 
-/* Invoke function 'func' on all threads, passing along 'aux'.
-   This function must be called with interrupts off. */
+/* Invoke function 'func' on all processes in the given list, 
+   passing along 'aux'. */
 void
 process_foreach (struct list *list, process_action_func *func, void *aux)
 {
@@ -824,11 +844,11 @@ process_get_info(struct process_info *parent_info,pid_t child_pid)
         return info;
   }
   return NULL;
-  
 }
 
-/* Invoke function 'func' on all threads, passing along 'aux'.
-   This function must be called with interrupts off. */
+/* Frees all children of the current process that 
+   have already exited. Invoked by the parent process
+   before exiting. */
 void
 process_free_children (struct process_info* parent_info)
 {
@@ -875,9 +895,9 @@ initialize_process_info(struct process_info **child_info_ptr)
   lock_init(&(child_info->lock));
   cond_init(&(child_info->cond));
   list_init(&(child_info->children));
-  list_init(&(child_info->fd_table));
+  list_init(&(child_info->fd_list));
 
-  child_info->cur_fd = FILE_DESCRIPTOR_START;
+  child_info->next_fd = FILE_DESCRIPTOR_START;
   child_info->exec_file = NULL;
   child_info->pid = -1;
   
@@ -890,30 +910,31 @@ int
 process_add_file_desc(struct file *file)
 {
   struct process_info *info = thread_current()->process_info;
-  struct list *fd_table = &(info->fd_table);
+  struct list *fd_list = &(info->fd_list);
 
   struct file_desc *desc = malloc(sizeof(struct file_desc));
   if (desc == NULL)
     return -1;
 
-  desc->fd = info->cur_fd;
-  info->cur_fd++;
+  desc->fd = info->next_fd;
+  info->next_fd++;
   desc->file = file;
 
-  list_push_back(fd_table,&(desc->elem));
+  list_push_back(fd_list,&(desc->elem));
   return desc->fd;
   
 }
 
-/* Retrieves the file associated with a given file descriptor for the current thread*/
+/* Retrieves the file associated with a given file descriptor for the 
+   current thread*/
 struct file* 
 process_get_file_desc(int fd)
 {
   struct process_info *info = thread_current()->process_info;
-  struct list *fd_table = &(info->fd_table);
+  struct list *fd_list = &(info->fd_list);
   
   struct list_elem *e;
-  for (e = list_begin (fd_table); e != list_end (fd_table); e = list_next (e)){
+  for (e = list_begin (fd_list); e != list_end (fd_list); e = list_next (e)){
     struct file_desc *desc = list_entry(e,struct file_desc, elem);
     if (desc->fd == fd) {
       return desc->file;
@@ -928,9 +949,9 @@ void
 process_remove_file_desc(int fd)
 {
   struct process_info *info = thread_current()->process_info;
-  struct list *fd_table = &(info->fd_table);
+  struct list *fd_list = &(info->fd_list);
   struct list_elem *e;
-  for (e = list_begin (fd_table); e != list_end (fd_table); e = list_next (e)){
+  for (e = list_begin (fd_list); e != list_end (fd_list); e = list_next (e)){
     struct file_desc *desc = list_entry(e,struct file_desc, elem);
     if (desc->fd == fd) {
       list_remove(e);
@@ -939,8 +960,3 @@ process_remove_file_desc(int fd)
     }
   }
 }
-
-
-
-
-
