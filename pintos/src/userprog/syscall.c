@@ -17,6 +17,8 @@ struct lock lock_filesys;
 
 int pop_arg(int **ustack_);
 bool valid_user_addr(void *uaddr);
+bool valid_user_page(void *uaddr);
+bool valid_str(const char *s, unsigned max_len);
 
 bool sys_halt(int *stack);
 bool sys_exit(int *stack);
@@ -145,6 +147,19 @@ valid_user_addr(void *uaddr)
 	return true;
 }
 
+bool
+valid_user_page(void* uaddr)
+{
+  if (!is_user_vaddr(uaddr))
+		return false;
+
+	uint32_t *pd = thread_current()->pagedir;
+	if (!pagedir_get_page (pd,uaddr))
+		return false;
+	
+	return true;
+}
+
 
 /* Halt the operating system. */
 bool sys_halt(int *stack UNUSED)
@@ -165,8 +180,54 @@ bool sys_exit(int *stack)
 	return true;		
 }
 
-bool valid_str(char *s, int max_len)
+bool 
+valid_str(const char *s, unsigned max_len)
 {
+  /* round to the nearest page boundary and validate the 
+  current page. cache the result and search the page for 
+  the end of the string (null terminator). repeat if the 
+  search continues across a page boundary. */
+  
+  /*
+  printf("start ptr:   %p\n", s);
+  printf("top of page: %p\n", pg_round_up(s) - 1);
+  printf("bot of page: %p\n", pg_round_down(s));
+  */
+  
+  
+  void* pg_top = pg_round_up (s) - 1;
+  
+  if (!valid_user_addr(pg_top))
+    return false;
+  
+  unsigned c;
+  for (c = 0; c < max_len; c++)
+  {
+    if (s+c > pg_top)
+    {
+      /* determine the next page */
+      pg_top = pg_round_up(s+c+1) - 1;
+      if (!valid_user_addr(pg_top))
+        return false;
+    }
+    if (s[c] == '\0')
+      return true;
+  }
+  return false;
+  
+  
+  /* PSEUDOCODE
+  validate page boundary
+  run for loop
+    if NOT index is on the valid page (pg_end)
+      calc next page boundary
+      if (not valid next page)
+    if null terminator
+      return true;
+  return false;
+  */
+  
+  /*
   int c;
   for (c = 0; c < max_len; c++)
   {
@@ -176,6 +237,7 @@ bool valid_str(char *s, int max_len)
       return true;
   }
   return false;
+  */
 }
 
 /* Start another process. */
