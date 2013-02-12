@@ -73,6 +73,8 @@ struct process_info * process_get_info(struct process_info *parent_info, pid_t c
 void process_free_children (struct process_info* info); 
 bool initialize_process_info(struct process_info **child_info_ptr);
 
+/* Initializes the process control block.
+  Sets process info for the main thread */
 void process_init(void)
 {
   
@@ -88,6 +90,16 @@ void process_init(void)
   t->process_info = main_info;
 
 }
+
+/* Initialize data needed to start a process. The sema and load_status are used
+to synchronize the parent waiting till load is complete */
+void process_set_init_data(struct process_init_data *init_data, char *args_copy){
+  init_data->args = args_copy;
+  sema_init(&(init_data->sema), 0);
+  init_data->load_status = false;
+}
+
+
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -106,19 +118,16 @@ process_execute (const char *args)
     return TID_ERROR;
   strlcpy (args_copy, args, PGSIZE);
 
-  struct process_init_data init_data;
-  init_data.args = args_copy;
-  sema_init(&(init_data.sema), 0);
-  init_data.load_status = false;
-  init_data.info = NULL;
-  
+/* Extract executable name from argument string to set as thread name */
   char tmp[strnlen(args_copy, PGSIZE)];
   strlcpy (tmp, args_copy, PGSIZE);
   
-  char *thread_name = NULL;
-  char *save_ptr;
+  char *thread_name, *save_ptr;
   thread_name = strtok_r (tmp, " ", &save_ptr);
   ASSERT(thread_name != NULL);
+
+  struct process_init_data init_data;
+  process_set_init_data(&init_data, args_copy);
   
   struct process_info *child_info;
   if (!initialize_process_info(&child_info))
@@ -196,9 +205,7 @@ start_process (void * init_data_)
    child of the calling process, or if process_wait() has already
    been successfully called for the given TID, returns -1
    immediately, without waiting.
-
-   This function will be implemented in problem 2-2.  For now, it
-   does nothing. */
+ */
 int
 process_wait (pid_t child_pid) 
 {
@@ -231,6 +238,25 @@ process_close(int status){
   lock_release(&(info->lock));
 }
 
+/* Close all files currently opened by the exiting thread */
+
+void close_open_files(struct process_info *info){
+   /* close all open files */
+  struct list_elem *e;
+
+  for (e = list_begin (&(info->fd_table)); e != list_end (&(info->fd_table));) {
+    struct list_elem *ne;
+    ne = list_next (e);
+    list_remove(e);
+    struct file_desc *desc = list_entry(e,struct file_desc, elem);
+    lock_acquire(&lock_filesys);
+    file_close(desc->file);
+    lock_release(&lock_filesys);
+    free(desc);
+    e = ne;
+  }
+}
+
 /* Free the current process's resources. */
 void
 process_exit (void)
@@ -256,6 +282,9 @@ process_exit (void)
     }
 
   struct process_info *info = t->process_info;  
+  
+  /* Close any files opened by this thread */
+  close_open_files(info);
 
   /* allow writes to the executable */
   lock_acquire(&lock_filesys);
@@ -272,24 +301,6 @@ process_exit (void)
   
   /* free all dead children */
   process_free_children (info);
-
-  /* close all open files */
-  struct list_elem *e;
-
-  for (e = list_begin (&(info->fd_table)); e != list_end (&(info->fd_table));) {
-    struct list_elem *ne;
-    ne = list_next (e);
-    list_remove(e);
-    struct file_desc *desc = list_entry(e,struct file_desc, elem);
-    lock_acquire(&lock_filesys);
-    file_close(desc->file);
-    lock_release(&lock_filesys);
-    free(desc);
-    e = ne;
-  }
-
-
-
   
   printf ("%s: exit(%d)\n", t->name, info->exit_code);
   
@@ -858,6 +869,7 @@ initialize_process_info(struct process_info **child_info_ptr)
   return true;
 }
 
+/* Adds a file descriptor to the current process */
 int 
 process_add_file_desc(struct file *file)
 {
@@ -877,6 +889,7 @@ process_add_file_desc(struct file *file)
   
 }
 
+/* Retrieves the file associated with a given file descriptor for the current thread*/
 struct file* 
 process_get_file_desc(int fd)
 {
@@ -894,6 +907,7 @@ process_get_file_desc(int fd)
   return NULL;
 }
 
+/* Removes the given open file from current threads list of open files */
 void 
 process_remove_file_desc(int fd)
 {

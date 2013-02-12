@@ -43,6 +43,7 @@ syscall_init (void)
   lock_init (&lock_filesys);
 }
 
+/* Handler for all system calls */
 static void
 syscall_handler (struct intr_frame *f) 
 {
@@ -109,7 +110,7 @@ syscall_handler (struct intr_frame *f)
 			break;
 	}
 
-	//if failure occured, kill process gracefully
+	/*if failure occured in sys_call, kill process gracefully*/
 	if (!success) {
       process_close(-1);
   		thread_exit ();
@@ -117,6 +118,9 @@ syscall_handler (struct intr_frame *f)
 }
 
 
+/* This function pops a word from the stack and returns it. 
+	We check if the stack is a valid user address before popping
+	next argument */
 int 
 pop_arg(int **ustack)
 {
@@ -131,6 +135,8 @@ pop_arg(int **ustack)
 	return arg;
 }
 
+/* Performs checks to make sure we our pointer
+	is a valid user address. */
 bool 
 valid_user_addr(void *uaddr)
 {
@@ -144,19 +150,6 @@ valid_user_addr(void *uaddr)
 	if (!pagedir_get_page (pd,uaddr))
 		return false;
 
-	return true;
-}
-
-bool
-valid_user_page(void* uaddr)
-{
-  if (!is_user_vaddr(uaddr))
-		return false;
-
-	uint32_t *pd = thread_current()->pagedir;
-	if (!pagedir_get_page (pd,uaddr))
-		return false;
-	
 	return true;
 }
 
