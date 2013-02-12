@@ -171,22 +171,22 @@ bool sys_exit(int *stack)
 	return true;		
 }
 
+
+/* Validate the user memory addresses for the given
+   character string of unknown length. Assume that it
+   is null terminated and not longer than max_len.
+  
+   Algorithm:
+   round to the nearest page boundary and validate the 
+   current page. cache the result and search the page for 
+   the end of the string (null terminator). repeat if the 
+   search continues across a page boundary. */
 bool 
 valid_str(const char *s, unsigned max_len)
 {
-  /* round to the nearest page boundary and validate the 
-  current page. cache the result and search the page for 
-  the end of the string (null terminator). repeat if the 
-  search continues across a page boundary. */
-  
-  /*
-  printf("start ptr:   %p\n", s);
-  printf("top of page: %p\n", pg_round_up(s) - 1);
-  printf("bot of page: %p\n", pg_round_down(s));
-  */
-  
-  
   void* pg_top = pg_round_up (s) - 1;
+  
+  /* validate the current page */
   
   if (!valid_user_addr(pg_top))
     return false;
@@ -194,9 +194,9 @@ valid_str(const char *s, unsigned max_len)
   unsigned c;
   for (c = 0; c < max_len; c++)
   {
-    if (s+c > pg_top)
+    if ((void*)(s+c) > pg_top)
     {
-      /* determine the next page */
+      /* find & validate the next page */
       pg_top = pg_round_up(s+c+1) - 1;
       if (!valid_user_addr(pg_top))
         return false;
@@ -205,30 +205,6 @@ valid_str(const char *s, unsigned max_len)
       return true;
   }
   return false;
-  
-  
-  /* PSEUDOCODE
-  validate page boundary
-  run for loop
-    if NOT index is on the valid page (pg_end)
-      calc next page boundary
-      if (not valid next page)
-    if null terminator
-      return true;
-  return false;
-  */
-  
-  /*
-  int c;
-  for (c = 0; c < max_len; c++)
-  {
-    if (!valid_user_addr(s+c) )
-      return false;
-    if (s[c] == '\0')
-      return true;
-  }
-  return false;
-  */
 }
 
 /* Start another process. */
@@ -383,7 +359,7 @@ bool sys_write(int *stack, uint32_t *eax)
 
 	void *buffer_end = ((char *) buffer) + size;
 
-	if (!valid_user_addr(buffer) ||
+	if (!valid_user_addr((void *)buffer) ||
 		!valid_user_addr(buffer_end))
 	  return false;
 
