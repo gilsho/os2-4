@@ -81,10 +81,10 @@ threads to execute str_tok_r simultaneously
 >> and arguments.  In Unix-like systems, the shell does this
 >> separation.  Identify at least two advantages of the Unix approach.
 
-1. Parsing command line interfaces minimizes time in kernl mode. If an 
-   error occurs while parsing an argument it will crash the shell as 
-   opposed to crashing the kernel. The cost of restarting the shell is
-   a lot cheaper than restarting the kernel.
+1. Parsing command line interfaces via the shell minimizes time in 
+   kernel mode. If an error occurs while parsing an argument it will 
+   crash the shell as opposed to crashing the kernel. The cost of 
+   restarting the shell is a lot cheaper than restarting the kernel.
 
 2. Parsing arguments in the shell lets the user interleave 
    directives to the shell with arguments to the program. For example,
@@ -103,11 +103,11 @@ threads to execute str_tok_r simultaneously
    stack itself rather than convert it into a string format first.
 
 4. Similar to the previous point, if a process wants to spawn multiple
-	process with the same set of arguments it can prepare a stack frame
-	with the arguments loaded once, and pass the same stack to the kernel
-	multiple times. The kernel will just need to scan the stack once
-	and copy it to a new location in memory, a much more efficient 
-	procedure.
+	 process with the same set of arguments it can prepare a stack frame
+	 with the arguments loaded once, and pass the same stack to the kernel
+	 multiple times. The kernel will just need to scan the stack once
+	 and copy it to a new location in memory, a much more efficient 
+	 procedure.
 
 
 			     SYSTEM CALLS
@@ -155,7 +155,7 @@ struct process_info
   struct list fd_table;   			/* list of file descriptors and their associated files */
   struct file *exec_file;           /* a pointer to the current executable file that thread is running. used to deny access to the 
   										file while program is running  */ 
-  int cur_fd;
+  int cur_fd;                   /* fd counter localized to this process only */
 };
 
 
@@ -190,7 +190,11 @@ define FILENAME_MAX 14 			/* maxumim number of characters allowed in a file name
 
 ->global?
 each process has its own list of file descriptors, but the file descriptor numbers are unique globally. design choice: know confusion
-between interprocess communication. 
+between interprocess communication.
+
+
+
+ 
 
 
 
@@ -198,7 +202,6 @@ between interprocess communication.
 
 >> B3: Describe your code for reading and writing user data from the
 >> kernel.
-
 
 We first pop the arguments off the stack. We try ti find the file descriptor by looking it up in a linked list of file descriptors open by the process. 
 We then check that the buffer is ALL(start + end) contained in valid
@@ -214,28 +217,29 @@ and finally we call the appropriate function from file.c , file_read or file_wri
 >> for a system call that only copies 2 bytes of data?  Is there room
 >> for improvement in these numbers, and how much?
 
-***If we were to implement our memory using the second approach we wouldn't have had to call pagedir_get_page at all and just rely on the MMU to generate a page fault when an illegal memory access calls.
-
 If we had to inspect every byte address for validity, then it would require as many PTE inspections as bytes to read/write. Hence for a full page that would be 4,096 inspections.
 
-We implemented an improved approach by caching the current page boundary to prevent unneccesary PTE inspections. We assume that the entire current page is valid user memory, therefore we only need to inspect the page table (calling pagedir_get_page) for each page that the data spans, not on every successful address. 
+However, if we assume that the entire current page is valid user memory, we only need to inspect the page table (calling pagedir_get_page) for each page that the data spans, not on every successive address. We implemented an improved approach by caching the current page boundary to prevent unneccesary PTE inspections. 
 
-For a full page (4,096 bytes), you would need a minimum of one inspection and a maximum of two inspections. For 2 bytes of data, you would also need a minimum of one inspection and a maximum of two inspections.
+For both a full page (4,096 bytes) and 2 bytes of data, this improved scheme only requires a minimum of one inspection and a maximum of two inspections.
+
+If we had implemented our user memory access check using the second approach described in the project spec, we would not have had to call pagedir_get_page at all, instead relying on the MMU to generate a page fault when an illegal memory access occurs.
 
 
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
 
-first we check if the calling process is trying to wait on one of his children and return -1 otherwise.
+The wait system call (sys_wait in syscall.c) invokes process_wait (in process.c) where most of the magic happens.
 
-We then make sure that this is the first time that the calling process is waiting on this particular child process. otherwise we return -1
+First, we check if the pid of the child to be waited on is actually a child of the current process. If it is not, return -1 as an error, since a process can not wait on a non-child process.
 
-We then check that the child info is still alive, and if not we return the error value that the process generated when it terminated that is stored in the process info structure.
+Next, we verify that this is the first time that the calling (parent) process is waiting on this particular child process by checking its process info structure. If this is not the first time that this child has been waited on, return -1 as an error.
 
-If all of the conditions specified above are not met then we call cond_wait on the condition variable associated with the child's "process info structure", releasing the lock. When the child process calss exit, he will signal the current process and wake him up.
+We then check that the child process has not yet exited. If the child process has already exited, we extract the status code that it stored in its process info structure.
 
-we designate this process as being waited on, so that if the parent process tries to wait on him again he will get an error value.
+If the child process is still alive and running, the parent process blocks (cond_wait) on the condition variable associated with the child's process info structure. When the child process finally exits, it signals the waiting parent process (cond_signal) and the parent process then extracts the child process' exit code.
 
+Finally, before returning the extracted child status code, we designate the child process as being waited on so that if the parent process tries to wait on it again, a status code of -1 will be returned (see above).  
 
 
 >> B6: Any access to user program memory at a user-specified address
@@ -252,15 +256,15 @@ we designate this process as being waited on, so that if the parent process trie
 >> paragraphs, describe the strategy or strategies you adopted for
 >> managing these issues.  Give an example.
 
+We avoid obscuring the primary logic of our functions in a morass of error-handling code by delegating error-handling to specific functions that perform memory read/write operations. This allows us to produce high-level code that is logical and intuitively organized.
 
--> In process_exit (which is called by thread_exit), we destroy the file table, iterating over each open file and closing it.
+While processing system calls, we implemented the function pop_arg which pops the pointer to the next arg (4-byte word) from the user stack. This function safeguards against invalid user memory accesses by validating the user stack pointer at both the current location and the next word location, returning -1 and exiting the process if an invalid memory pointer is encountered. This function modularizes the error handling that otherwise would be duplicated in many different areas of the various system call functions.
 
--> in sytem calls, we use a wrapper function pop_arg that gets a 4 byte word from the top of the stack while encapsulating the error handling.
+To validate user memory access, we implemented the function valid_user_addr that combines several checks on a given user virtual memory address. A user virtual memory address is valid if the memory pointer 1) is not NULL, 2) points to a virtual address below PHYS_BASE (user space), and 3) is contained in a page installed in the current processes' page directory.
 
--> we have defined a function valid_user_addr which combines all necessary checks to be performed on a user address in order to verify its validity: hat the use address is not in kernel space, and that the current page it located in has been allocated.
+When a process exits, such as when an error is detected, we ensure that all temporarily allocated resources are freed within the function process_exit, which is invoked before a thread exits (both gracefully or due to an exception). A process releases any locks that it may have acquired during execution, closes all files in its list of file descriptors, and frees any structs belonging to its child processes that have already exited. In addition, a process may free its own process info struct if its parent process has already exited.
 
- (Ask john if we need to free locks acquired?)
-
+For example, if a process has spawned 10 child processes that all have exited, opens a file (thus storing a file descriptor), and encounters a page fault after acquiring the file system lock to write data to the file, we can be sure that all resources will be freed correctly. The page fault will set the status code of the crashed process to -1 and kill the thread, eventually invoking process_exit. In process_exit, the file system lock will be released, the open file will be closed, and all child structs will be freed because they are no longer alive.
 
 ---- SYNCHRONIZATION ----
 
