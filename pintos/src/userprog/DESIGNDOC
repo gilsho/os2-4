@@ -187,15 +187,9 @@ define FILENAME_MAX 14 			/* maxumim number of characters allowed in a file name
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
 
+When a process opens a file, it allocates a file_desc struct (defined in process.c) and generates a unique file descriptor number using a process-local counter. The counter mechanism isolates the file struct from the file descriptor, providing increased security; the user does not have access to kernel-only structs. 
 
-->global?
-each process has its own list of file descriptors, but the file descriptor numbers are unique globally. design choice: know confusion
-between interprocess communication.
-
-
-
- 
-
+The process then appends the new file_desc struct to the end of its list of file_desc structs. In this scheme, file descriptors are only unique within a single process, and a process may only access descriptors that it has assigned itself. We chose not to implement a global counter for assigning globally unique file descriptors because it would require synchronization constructs.
 
 
 ---- ALGORITHMS ----
@@ -208,6 +202,12 @@ We then check that the buffer is ALL(start + end) contained in valid
 user virtual address space. 
 we then acquire a global file system lock to ensure only one process has access to the file system at a time.
 and finally we call the appropriate function from file.c , file_read or file_write. and then push the return value to eax on the interrupt frame.
+
+Reading Data:
+When reading user data from a file, a process first pops & validates the arguments off of the user stack (the entire span of destination buffer memory is validated using the size arg). Next, the process attempts to resolve the file struct from the given file descriptor by searching its list of file_desc structs, exiting the process with a -1 status code if a file is not found. It then performs a read from either STDIN or the specified file struct using the appropriate filesys functions, pushing the resulting number of bytes read onto the user stack. 
+
+Writing Data:
+The steps for writing user data to a file are similar to reading data from a file. A process first pops & validates the arguments off of the stack, validating the user virtual memory range that the source buffer spans (we do this in a smart manner by validating endpoints only). Next, the process attempts to resolve the file struct from the given file descriptor by searching its list of file_desc structs, exiting the process with a -1 status code if a file is not found. It then performs a write to either STDOUT or the specified file struct using the appropriate filesys functions, pushing the resulting number of bytes written onto the user stack. 
 
 
 >> B4: Suppose a system call causes a full page (4,096 bytes) of data
@@ -305,7 +305,7 @@ A disadvantage is that doing a lookup on an open file using a file descriptor ta
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
 
-We have not changed the identity mapping. Unlike file descriptors, tid do not expose sensitive addresses so it is safe to simply cast the tid to a pid and return that to the user. This works because, in pintos, one process corresponds to one thread.
+We have not changed the identity mapping. Unlike file descriptors, tid do not expose sensitive addresses so it is safe to simply cast the tid to a pid and return that to the user. This is appropriate because each process contains only a single thread.
 
 			   SURVEY QUESTIONS
 			   ================

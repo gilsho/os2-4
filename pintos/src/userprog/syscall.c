@@ -291,7 +291,7 @@ bool sys_open(int *stack, uint32_t *eax)
 	f = filesys_open (name);
 	lock_release(&lock_filesys);
 	
-	/* obtain a new file descriptor from the thread's table */
+	/* add a new file descriptor to the thread's fd list */
 	int fd = -1;
 	if (f != NULL)
 	  fd = process_add_file_desc(f);
@@ -323,7 +323,7 @@ bool sys_filesize(int *stack, uint32_t *eax)
 	return true;		
 }
 
- /* Read from a file. */
+ /* Read user data from a file. */
 bool sys_read(int *stack, uint32_t *eax)
 {
 	int fd = pop_arg(&stack);
@@ -339,6 +339,8 @@ bool sys_read(int *stack, uint32_t *eax)
 	struct file *file = process_get_file_desc(fd);
 	if (file == NULL || fd == 1)
 	  return false;
+	  
+	/* read from STDIN */
 	
 	lock_acquire(&lock_filesys);
 	int bytes_read = (int) file_read (file, buffer, (off_t) size);

@@ -885,7 +885,7 @@ initialize_process_info(struct process_info **child_info_ptr)
   return true;
 }
 
-/* Adds a file descriptor to the current process */
+/* Adds a file descriptor to the current process' list */
 int 
 process_add_file_desc(struct file *file)
 {
