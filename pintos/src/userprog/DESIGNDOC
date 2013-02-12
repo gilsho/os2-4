@@ -1,5 +1,5 @@
 		     +--------------------------+
-         | CS 140	                  |
+         	 | CS 140	                |
 		     | PROJECT 2: USER PROGRAMS	|
 		     | DESIGN DOCUMENT        	|
 		     +--------------------------+
@@ -47,37 +47,72 @@ No comment.
 >> you arrange for the elements of argv[] to be in the right order?
 >> How do you avoid overflowing the stack page?
 
-We first set up the stack before calling filsys_open
+The first thing we do is initialize the user stack. We then call parse_args,
+a function that we defined, to place the arguments passed in to the user
+onto the stack in the correct format. Inside parse_args, we copy the
+string containing the file name and arguments onto the user stack
+in its entirety. We then call str_tok_r on the string loaded in the user
+stack and replace the spaces with null terminating characters. During
+this pass we push the starting address of each argument to a temporary
+kernel page. Once we are finished, we cycle through all the starting addresses
+of the arguments we stored in the temporary kernel page and push them onto
+the user stack. This ensures the pointer to the arguemnts are placed
+in the correct order. 
 
-We wrote a parse_args(args,esp,&file_name);
-
-when we copied the args we limit ourselves to a PGSIZE - padding
-//int arglen = strnlen(args,PGSIZE) + 1;
-
-then we do one pass over data to count the number of arguments
-and then before writing them make sure there is enough space on stack
-
+We have two checks in place to protect against overlowing the stack page.
+When we first copy the input string onto the user stack we use strlcpy
+and cap the number of bytes copied at just below the page size. We then
+check if this cap has been reached and report an error if it has.
+Then, after we finised one pass over the argument string in the user
+stack, and inserted null terminating character, we calculate whether
+there is enough space on the user stack to push the elements of arg[v],
+argc, and the rest of the bytes required. If we don't have enough space
+we return an error.
 
 ---- RATIONALE ----
 
 >> A3: Why does Pintos implement strtok_r() but not strtok()?
 
-strtok stores state internally. If multiple threads call strtok
-then they may corrupt each other's state. If they are interleaved
-then one thread will resume at the other's last saved point. not 
-reentrant
-
+The strtok function store state internally. There is an implicit
+assumption that each successive call to str_tok will be made
+by the same thread using the same string. Interleaving calls to
+str_tok by multiple threads will corrupt the state stored in
+str_tok and exhibit undefined behavior. str_tok_r solves this problem
+by providing a save_ptr which is passed by reference. This allows
+each thread to internally store its own state, allowing multiple 
+threads to execute str_tok_r simultaneously
 
 >> A4: In Pintos, the kernel separates commands into a executable name
 >> and arguments.  In Unix-like systems, the shell does this
 >> separation.  Identify at least two advantages of the Unix approach.
 
-shell will crash vs. os crash
-you can be more flexible in how you run program
-aliases. shell scripts 
-some options are meant for the shell and not for the program (|, >, <)
+1. Parsing command line interfaces minimizes time in kernl mode. If an 
+   error occurs while parsing an argument it will crash the shell as 
+   opposed to crashing the kernel. The cost of restarting the shell is
+   a lot cheaper than restarting the kernel.
 
+2. Parsing arguments in the shell lets the user interleave 
+   directives to the shell with arguments to the program. For example,
+   the operators "> < | ; &&" are meant to be interperted by the shell.
+   If we were to pass in the full string entered by the user to the 
+   'exec' system call the kernel would need to know about these special
+   symbols.
 
+3. Having the kernel perform the argument parsing means that every 
+   program must be executed with its parameters specified in a string
+   format delegated by spaces. This is reasonable for arguments passed
+   in via the command line interface, but creates unnecessary overhead
+   for processes whose list of arguments are known ahead of time. If, for
+   example, a program wants to spawn a child process with a fixed set 
+   of arguments, the parent process can just go ahead and construct the 
+   stack itself rather than convert it into a string format first.
+
+4. Similar to the previous point, if a process wants to spawn multiple
+	process with the same set of arguments it can prepare a stack frame
+	with the arguments loaded once, and pass the same stack to the kernel
+	multiple times. The kernel will just need to scan the stack once
+	and copy it to a new location in memory, a much more efficient 
+	procedure.
 
 
 			     SYSTEM CALLS
@@ -92,28 +127,23 @@ some options are meant for the shell and not for the program (|, >, <)
 	
 in thread.h
 ------------
-	#define MAX_THREAD_OPEN_FILES 128 - the maximum number of open
-	files allowed per thread
+    struct file *exec_file;   /* a pointer to the current executable file that thread is running. used to deny access to the file 								 while program is running  */
 
-
-  
-    struct file *exec_file;            a pointer to the current executable th thread is running. used to deny access and allow
-    writes on exit
-
-    struct file * fd_table[MAX_THREAD_OPEN_FILES]; /* File desc. table */ keeps a table of the file descriptor mapping to files.
+    struct file * fd_table;   /* File descriptor table. Stores a list of file descriptor mapping to files.
     
-    struct process_info *process_info; // a struct containing the information related to the thread's process.
+    struct process_info *process_info; /* a pointer to a struct containing the information related to the thread's process.
 
 
 in process.h
 ------------
 
-typedef int pid_t; //a process id type on the kernel side
+typedef int pid_t; /*a process id type on the kernel side */
 
 
 in process.c
 -------------
 
+/* This struct contains all the information related to a process */
 struct process_info
 {
   pid_t pid;					/* unique process id (same as thread tid) */
@@ -121,27 +151,30 @@ struct process_info
   int exit_code;				/*	the exit code generated by process, only valid if is_alive is false */
   bool has_been_waited;			/* flag indicating if parent process has waited on this process */
   bool is_alive;				/* indicating whether process has exited */
-  bool is_parent_alive;			/* flag indicating whether parent has exited, used for memory management by the process during exited. */
-  struct condition cond;		/* used to implement waiting system call */
-  struct list_elem child_elem; /* elem in parent list */
-  struct list children;   /* list of child processes (struct process_info) */
+  bool is_parent_alive;			/* flag indicating whether parent has exited, used for memory management by the process 
+  									during exited. */
+  struct condition cond;		/* used to implement the wait system call */
+  struct list_elem child_elem; 	/* elem in parent list */
+  struct list children;   		/* list of process_info structs of child processes */
 };
 
-This structure is data passed between parent and child when child is first created (between process_execute and process_start). created on the stack
+
+/* This struct is used to pass more than one variable between a parent process' process_execute call and a child process' start_process function. */
 
 struct process_init_data
 {
-  char *args;					// string containing name of executable and arguments of/to program.
-  struct semaphore sema;		//synchronization mechanism used to have parent child wiat for completion of load
-  bool load_status;				//represents if load of child process was successful. used to signal to parent process.
-  struct process_info *info;	//the process information intialized by the parent to stored by child
+  char *args;					/* string containing name of executable and arguments of/to program. */
+  struct semaphore sema;		/* synchronization mechanism used to have parent child wiat for completion of load */
+  bool load_status;				/* represents if load of child process was successful. used to signal to parent process. */
+  struct process_info *info;	/* the process information intialized by the parent to stored by child */
 };
 
 in syscall.c:
 -------------
-define FILENAME_MAX 14 			//the maxumim number of characters allowed in a file name
+define FILENAME_MAX 14 			/* maxumim number of characters allowed in a file name */
 
-struct lock lock_filesys;		// a lock used to restrict access to file system. to allow only one process to use file system at a time
+struct lock lock_filesys;		/* a lock used to restrict access to the file system. Allows 
+									only one process to use file system at a time */
 
 
 

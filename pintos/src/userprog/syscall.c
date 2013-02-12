@@ -13,7 +13,7 @@
 
 #define FILENAME_MAX 14
 
-struct lock lock_filesys;
+extern struct lock lock_filesys;
 
 int pop_arg(int **ustack_);
 bool valid_user_addr(void *uaddr);
@@ -149,7 +149,6 @@ valid_user_addr(void *uaddr)
 /* Halt the operating system. */
 bool sys_halt(int *stack UNUSED)
 {
-	/*printf("halt current: %s\n", thread_current()->name);*/
 	shutdown_power_off();
 	return true;	
 }
@@ -160,7 +159,6 @@ bool sys_exit(int *stack)
 	int status = pop_arg(&stack);
 	process_close(status);
 	thread_exit();
-	/*printf("in sys_exit, current thread: %s, status: %d\n", thread_current()->name, status);*/
 	
 	return true;		
 }
@@ -187,9 +185,7 @@ bool sys_exec(int *stack, uint32_t *eax)
 	  return false;
 	
 	pid_t pid = process_execute (cmdline);
-	
-	/* printf("in sys_exec, pid: %d\n", (int) pid); */
-	  
+		  
 	/* push syscall result to the user program */
   memcpy(eax, &pid, sizeof(pid_t));
 	
@@ -200,7 +196,6 @@ bool sys_exec(int *stack, uint32_t *eax)
 bool sys_wait(int *stack, uint32_t *eax)
 {
 	pid_t child_pid = pop_arg(&stack);
-	/*printf("In sys_wait: current: %s, child_pid: %d\n", thread_current()->name, child_pid);*/
 	int status = process_wait (child_pid);
 
 	memcpy(eax, &status, sizeof(int));
@@ -268,7 +263,7 @@ bool sys_open(int *stack, uint32_t *eax)
 	/* obtain a new file descriptor from the thread's table */
 	int fd = -1;
 	if (f != NULL)
-	  fd = thread_fd_set(f);
+	  fd = process_add_file_desc(f);
 	
 	/* push syscall result to the user program */
   memcpy(eax, &fd, sizeof(uint32_t));
@@ -281,7 +276,7 @@ bool sys_filesize(int *stack, uint32_t *eax)
 {
 	int fd = pop_arg(&stack);
 	
-	struct file *file = thread_fd_get(fd);
+	struct file *file = process_get_file_desc(fd);
 	if (file == NULL)
 	  return false;
 	
@@ -310,7 +305,7 @@ bool sys_read(int *stack, uint32_t *eax)
 		!valid_user_addr(buffer_end))
 	  return false;
 	  
-	struct file *file = thread_fd_get(fd);
+	struct file *file = process_get_file_desc(fd);
 	if (file == NULL || fd == 1)
 	  return false;
 	
@@ -343,7 +338,7 @@ bool sys_write(int *stack, uint32_t *eax)
 		return true;
 	}
 	
-	struct file *file = thread_fd_get(fd);
+	struct file *file = process_get_file_desc(fd);
 	if (file == NULL || fd == 0)
 	  return false;
 	
@@ -363,7 +358,7 @@ bool sys_seek(int *stack)
 	int fd = pop_arg(&stack);
 	unsigned new_pos = pop_arg(&stack);
 	
-	struct file *file = thread_fd_get(fd);
+	struct file *file = process_get_file_desc(fd);
 	if (file == NULL)
 	  return false;
 
@@ -379,7 +374,7 @@ bool sys_tell(int *stack, uint32_t *eax)
 {
 	int fd = pop_arg(&stack);
 	
-	struct file *file = thread_fd_get(fd);
+	struct file *file = process_get_file_desc(fd);
 	if (file == NULL)
 	  return false;
 	
@@ -400,7 +395,7 @@ bool sys_close(int *stack)
 {
 	int fd = pop_arg(&stack);
 	
-	struct file *file = thread_fd_get(fd);
+	struct file *file = process_get_file_desc(fd);
 	if (file == NULL || fd < 2)
 	  return false;
 	
@@ -408,7 +403,7 @@ bool sys_close(int *stack)
 	file_close (file);
 	lock_release(&lock_filesys);
 	
-	thread_fd_clear(fd);
+	process_remove_file_desc(fd);
 	
 	return true;	
 }

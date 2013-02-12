@@ -107,10 +107,6 @@ struct thread
 
 #ifdef USERPROG
     uint32_t *pagedir;                  /* Page directory. */
-    
-    struct file *exec_file;             /* Executable file. */
-    struct file * fd_table[MAX_THREAD_OPEN_FILES]; /* File desc. table */
-    
     struct process_info *process_info;
 #endif
 
@@ -156,12 +152,5 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
-#ifdef USERPROG
-void thread_fd_init(struct thread *t);
-void thread_fd_destroy(void);
-int thread_fd_set(struct file *file);
-struct file* thread_fd_get(int fd);
-void thread_fd_clear(int fd);
-#endif
 
 #endif /* threads/thread.h */
