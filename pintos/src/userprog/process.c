@@ -20,8 +20,8 @@
 #include "threads/synch.h"
 #include "threads/malloc.h"
 
-static int curr_pid;
-static struct lock lock_pid;
+
+struct lock lock_filesys;
 
 struct process_info
 {
@@ -32,8 +32,11 @@ struct process_info
   bool is_alive;
   bool is_parent_alive;
   struct condition cond;
-  struct list_elem child_elem; /* elem in parent list */
-  struct list children;   /* list of child processes (struct process_info) */
+  struct list_elem child_elem;        /* elem in parent list */
+  struct list children;               /* list of child processes (struct process_info) */
+  struct list fd_table;   
+  struct file *exec_file;             /* Executable file. */
+  int cur_fd;
 };
 
 struct process_init_data
@@ -44,14 +47,23 @@ struct process_init_data
   struct process_info *info;
 };
 
+struct file_desc
+{
+  int fd;
+  struct file *file;
+  struct list_elem elem;
+};
+
+#define FILE_DESCRIPTOR_START 2
+
 
 typedef void process_action_func (struct process_info *info, void *aux);
 static thread_func start_process NO_RETURN;
-static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool load (const char *cmdline, void (**eip) (void), void **esp, struct file **file);
 void push_stack(void **stack_, void *data, size_t n);
 void push_stack_int(void **stack_, int val);
 void push_stack_char(void **stack_, char c);
-void parse_args(const char *args, void **esp, char **file_name);
+bool parse_args(const char *args, void **esp, char **file_name);
 
 /* Invoke function 'func' on all threads, passing along 'aux'.
    This function must be called with interrupts off. */
@@ -64,12 +76,6 @@ bool initialize_process_info(struct process_info **child_info_ptr);
 void process_init(void)
 {
   
-  /* Initialize the pid counter */
-  lock_init(&lock_pid);
-  lock_acquire(&lock_pid);
-  curr_pid = 0;
-  lock_release(&lock_pid);
-  
   struct process_info *main_info;  
   bool result = initialize_process_info(&main_info);
   
@@ -80,6 +86,7 @@ void process_init(void)
   
   struct thread *t = thread_current();
   t->process_info = main_info;
+
 }
 
 /* Starts a new thread running a user program loaded from
@@ -125,23 +132,19 @@ process_execute (const char *args)
   list_push_back(&(info->children), &(child_info->child_elem)); /* add to children list */
 
   tid = thread_create (thread_name, PRI_DEFAULT, start_process, (void *)&init_data);
-
-  /* printf("child tid: %d\n", tid); */
   
   if(tid != TID_ERROR)
   {
     sema_down(&(init_data.sema));
   }
-  
-  /* printf("process_execute, load_status: %d name: %s\n", (int)init_data.load_status, thread_current()->name); */
-  
+    
   palloc_free_page (args_copy); 
   
   if (!init_data.load_status){
-    return -1;
+    return TID_ERROR;
   }
 
-  return child_info->pid;
+  return tid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -152,7 +155,6 @@ start_process (void * init_data_)
   struct process_init_data *init_data = (struct process_init_data *)init_data_;
   char *args = init_data->args;
 
-  /*char *args = args_;*/
   struct intr_frame if_;
   bool success;
 
@@ -161,17 +163,12 @@ start_process (void * init_data_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (args, &if_.eip, &if_.esp);
-
-  /*printf("in start_process, success: %d\n", (int)success);*/
+  success = load (args, &if_.eip, &if_.esp, &(init_data->info->exec_file));
   
   init_data->load_status = success;
-  thread_current()->process_info = init_data->info;
-  
-  /* printf("CHILD pid: %d name: %s\n", thread_current()->pid, thread_current()->name); */
-  /* printf("~~~~IN start_process load_status: %d\n", (int)init_data->load_status); */
-  
-  /* printf("about to sema_up: %s\n", thread_current()->name); */
+  struct thread *t = thread_current();
+  init_data->info->pid = (pid_t) t->tid;
+  t->process_info = init_data->info;
   
   sema_up(&(init_data->sema));
   
@@ -258,10 +255,13 @@ process_exit (void)
       pagedir_destroy (pd);
     }
 
-  /* allow writes to the executable */
-  file_close(t->exec_file);
-
   struct process_info *info = t->process_info;  
+
+  /* allow writes to the executable */
+  lock_acquire(&lock_filesys);
+  file_close(info->exec_file);
+  lock_release(&lock_filesys);
+
   lock_acquire(&(info->lock));
 
   /* kill the current process */
@@ -272,13 +272,30 @@ process_exit (void)
   
   /* free all dead children */
   process_free_children (info);
+
+  /* close all open files */
+  struct list_elem *e;
+
+  for (e = list_begin (&(info->fd_table)); e != list_end (&(info->fd_table));) {
+    struct list_elem *ne;
+    ne = list_next (e);
+    list_remove(e);
+    struct file_desc *desc = list_entry(e,struct file_desc, elem);
+    lock_acquire(&lock_filesys);
+    file_close(desc->file);
+    lock_release(&lock_filesys);
+    free(desc);
+    e = ne;
+  }
+
+
+
   
   printf ("%s: exit(%d)\n", t->name, info->exit_code);
   
   /* free self if parent is dead */
   if (!info->is_parent_alive)
   {
-    /* printf("parent is dead. name: %s\n", t->name); */
     /* no race conditions since parent is dead */
     lock_release(&(info->lock));
     free(info);
@@ -377,11 +394,11 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
                           bool writable);
 
-
 /* Pushes data of length n bytes onto a user stack. assumes the 
    stack is always pointing to last byte of valid data. The
    function will maintain this invariant.*/
-void push_stack(void **stack_, void *data, size_t n)
+void 
+push_stack(void **stack_, void *data, size_t n)
 {
   char **stack = (char **)stack_;
   *stack -= n;
@@ -390,14 +407,16 @@ void push_stack(void **stack_, void *data, size_t n)
 
 /* pushes an integer value onto a user stack. see push_stack
    for implementation details */
-void push_stack_int(void **stack_, int val)
+void 
+push_stack_int(void **stack_, int val)
 {
   push_stack(stack_,&val,sizeof(int));
 }
 
 /* Pushes a character onto a user stack. see push_stack for
    implementation details. */
-void push_stack_char(void **stack_, char c)
+void 
+push_stack_char(void **stack_, char c)
 {
   push_stack(stack_,&c,sizeof(char));
 }
@@ -407,10 +426,17 @@ void push_stack_char(void **stack_, char c)
    the arguments on the user stack in preparation for a "int main(argv,argc)"
    call. Function sets file_name to point to the executable file name 
    located on the user stack.*/
-void parse_args(const char *args, void **esp, char **file_name)
+
+#define MAX_PADDING 4
+
+bool 
+parse_args(const char *args, void **esp, char **file_name)
 {
+
   /* +1 is to include the null terminating character */
   int arglen = strnlen(args,PGSIZE) + 1;
+  if (arglen > PGSIZE-MAX_PADDING)
+    return false;
   push_stack(esp,(void *)args,arglen);
   
   char *args_stack = *esp;
@@ -434,7 +460,11 @@ void parse_args(const char *args, void **esp, char **file_name)
     argc++;
   }
 
-  /* what if stack exceeds full page ? */
+  /* check that setting up the stack will not exceed page boundary */
+
+  int *page_bottom =  (int *)pg_round_down (esp);
+  if ((int *)esp - (argc + 4) < page_bottom) 
+      return false;
 
   push_stack_int(esp,0);
   for (i = argc-1; i >= 0; i--) {
@@ -447,6 +477,8 @@ void parse_args(const char *args, void **esp, char **file_name)
   push_stack_int(esp,argc);
   push_stack_int(esp,0);
 
+  return true;
+
 }
 
 /* Loads an ELF executable from FILE_NAME into the current thread.
@@ -454,11 +486,10 @@ void parse_args(const char *args, void **esp, char **file_name)
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load (const char *args, void (**eip) (void), void **esp)
+load (const char *args, void (**eip) (void), void **esp, struct file **file)
 {
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
-  struct file *file = NULL;
   off_t file_ofs;
   bool success = false;
   int i;
@@ -473,21 +504,26 @@ load (const char *args, void (**eip) (void), void **esp)
   if (!setup_stack (esp))
     goto done;
 
+
+
   /* Parse command line arguments and push them onto user stack */
   char *file_name;
-  parse_args(args,esp,&file_name);
-  
-  file = filesys_open (file_name);
-  if (file == NULL) 
+  if (!parse_args(args,esp,&file_name))
+    goto done;
+
+  lock_acquire(&lock_filesys);
+
+  (*file) = filesys_open (file_name);
+  if (*file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
   
-  file_deny_write (file);
+  file_deny_write (*file);
 
   /* Read and verify executable header. */
-  if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
+  if (file_read (*file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
       || ehdr.e_type != 2
       || ehdr.e_machine != 3
@@ -505,11 +541,11 @@ load (const char *args, void (**eip) (void), void **esp)
     {
       struct Elf32_Phdr phdr;
 
-      if (file_ofs < 0 || file_ofs > file_length (file))
+      if (file_ofs < 0 || file_ofs > file_length (*file))
         goto done;
-      file_seek (file, file_ofs);
+      file_seek (*file, file_ofs);
 
-      if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
+      if (file_read (*file, &phdr, sizeof phdr) != sizeof phdr)
         goto done;
       file_ofs += sizeof phdr;
       switch (phdr.p_type) 
@@ -526,7 +562,7 @@ load (const char *args, void (**eip) (void), void **esp)
         case PT_SHLIB:
           goto done;
         case PT_LOAD:
-          if (validate_segment (&phdr, file)) 
+          if (validate_segment (&phdr, *file)) 
             {
               bool writable = (phdr.p_flags & PF_W) != 0;
               uint32_t file_page = phdr.p_offset & ~PGMASK;
@@ -548,7 +584,7 @@ load (const char *args, void (**eip) (void), void **esp)
                   read_bytes = 0;
                   zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
                 }
-              if (!load_segment (file, file_page, (void *) mem_page,
+              if (!load_segment (*file, file_page, (void *) mem_page,
                                  read_bytes, zero_bytes, writable))
                 goto done;
             }
@@ -566,10 +602,13 @@ load (const char *args, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
-  if (!success)
-    file_close (file);
-  else
-    t->exec_file = file;
+  if (!success) {
+    file_close (*file);
+    (*file) = NULL;
+  }
+
+  lock_release(&lock_filesys);
+
   return success;
 }
 
@@ -731,7 +770,7 @@ process_foreach (struct list *list, process_action_func *func, void *aux)
   for (e = list_begin (list); e != list_end (list);
        e = list_next (e))
     {
-      struct process_info *info = list_entry (e, struct process_info,         child_elem);
+      struct process_info *info = list_entry (e, struct process_info,child_elem);
       
       func (info, aux);
     }
@@ -806,15 +845,72 @@ initialize_process_info(struct process_info **child_info_ptr)
   child_info->is_parent_alive = true;
   child_info->has_been_waited = false;
   
-  lock_acquire(&lock_pid);
-  curr_pid++;
-  child_info->pid = curr_pid;
-  lock_release(&lock_pid);
-  
   lock_init(&(child_info->lock));
   cond_init(&(child_info->cond));
   list_init(&(child_info->children));
+  list_init(&(child_info->fd_table));
+
+  child_info->cur_fd = FILE_DESCRIPTOR_START;
+  child_info->exec_file = NULL;
+  child_info->pid = -1;
   
   *child_info_ptr = child_info;
   return true;
 }
+
+int 
+process_add_file_desc(struct file *file)
+{
+  struct process_info *info = thread_current()->process_info;
+  struct list *fd_table = &(info->fd_table);
+
+  struct file_desc *desc = malloc(sizeof(struct file_desc));
+  if (desc == NULL)
+    return -1;
+
+  desc->fd = info->cur_fd;
+  info->cur_fd++;
+  desc->file = file;
+
+  list_push_back(fd_table,&(desc->elem));
+  return desc->fd;
+  
+}
+
+struct file* 
+process_get_file_desc(int fd)
+{
+  struct process_info *info = thread_current()->process_info;
+  struct list *fd_table = &(info->fd_table);
+  
+  struct list_elem *e;
+  for (e = list_begin (fd_table); e != list_end (fd_table); e = list_next (e)){
+    struct file_desc *desc = list_entry(e,struct file_desc, elem);
+    if (desc->fd == fd) {
+      return desc->file;
+    }
+  }
+  
+  return NULL;
+}
+
+void 
+process_remove_file_desc(int fd)
+{
+  struct process_info *info = thread_current()->process_info;
+  struct list *fd_table = &(info->fd_table);
+  struct list_elem *e;
+  for (e = list_begin (fd_table); e != list_end (fd_table); e = list_next (e)){
+    struct file_desc *desc = list_entry(e,struct file_desc, elem);
+    if (desc->fd == fd) {
+      list_remove(e);
+      free(desc);
+      return;
+    }
+  }
+}
+
+
+
+
+
