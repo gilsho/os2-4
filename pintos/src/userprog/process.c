@@ -72,7 +72,9 @@ void set_parent_dead(struct process_info *info, void* aux UNUSED);
 struct process_info * process_get_info(struct process_info *parent_info, pid_t child_pid);
 void process_free_children (struct process_info* info); 
 bool initialize_process_info(struct process_info **child_info_ptr);
-
+void process_set_init_data(struct process_init_data *init_data, char *args_copy);
+void close_open_files(struct process_info *info);
+void release_children_locks(struct process_info *info, void* aux UNUSED);
 /* Initializes the process control block.
   Sets process info for the main thread */
 void process_init(void)
@@ -287,15 +289,20 @@ process_exit (void)
   close_open_files(info);
 
   /* allow writes to the executable */
-  lock_acquire(&lock_filesys);
+  if(!lock_held_by_current_thread(&lock_filesys))
+    lock_acquire(&lock_filesys);
   file_close(info->exec_file);
   lock_release(&lock_filesys);
 
-  lock_acquire(&(info->lock));
+  if(!lock_held_by_current_thread(&info->lock))
+    lock_acquire(&(info->lock));
 
   /* kill the current process */
   info->is_alive = false;
  
+  /* Release all children locks that you might be holding when you exit */
+  process_foreach(&(info->children), &release_children_locks, NULL);
+
   /* tell all children that we are dead */
   process_foreach (&(info->children), &set_parent_dead, NULL);
   
@@ -787,6 +794,14 @@ process_foreach (struct list *list, process_action_func *func, void *aux)
     }
 }
 
+/* Checks to see if current threads owns childs lock, and if so, releases it */
+void
+release_children_locks(struct process_info *info, void* aux UNUSED){
+  if(lock_held_by_current_thread (&(info->lock)))
+    lock_release(&(info->lock));
+}
+
+/* Sets a child's is_parent_alive flag to false */
 void
 set_parent_dead(struct process_info *info, void* aux UNUSED)
 {
@@ -795,6 +810,7 @@ set_parent_dead(struct process_info *info, void* aux UNUSED)
   lock_release(&(info->lock));
 }
 
+/* Retrieves the process info of a child process using a given child pid */
 struct process_info *
 process_get_info(struct process_info *parent_info,pid_t child_pid) 
 {

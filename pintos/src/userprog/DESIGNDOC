@@ -294,9 +294,9 @@ We chose to verify the validity of a user-provided pointer before dereferencing 
 >> for file descriptors?
 
 Each process uses a dynamically allocated linked list to store its open files, along with their file_descriptors. The advantage here is that a process can only have access to its own open files, and there is no danger that it will access, and potentially corrupt, the open file state of another process. It also makes it easy to add open files, as you simply append the new file to the end of a list. Since it is dynamically allocated, we don't need to place a cap on the number of open files that a process can have.
-Moreover, we generate file descriptors using a global counter, which means that a file descriptor is not tied to the pointer to the file. This design protects against malicious user programs which might try to dereference a file descriptor to get access to restricted parts of the kernel.
+Moreover, we generate file descriptors using a process-specific counter, which means that a file descriptor is not tied to the pointer to the file. This design protects against malicious user programs which might try to dereference a file descriptor to get access to restricted parts of the kernel.
 
-A disadvantage is that, since we are using a global counter to create file descriptors, we need to acquire a global lock every time a process tries to open a file. However we are not preventing any concurrency, since a file would have to acquire the file system lock when it opened a file anyway. Another disadvantage is that doing a lookup on an open file takes O(n) time, since one has to traverse the entire linked list of open files.
+A disadvantage is that doing a lookup on an open file using a file descriptor takes O(n) time, since one has to traverse the entire linked list of open files. Also, since each process is maintaining its own list, there is a fair amount of memory overhead to keep track of open files.
 
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
