@@ -79,7 +79,10 @@ page_supplement_hash(const struct hash_elem *e, void *aux UNUSED)
 	return hash_int((int) pse->upage);
 }
 
+void
+page_supplement_destroy(struct hash *pagesup_table UNUSED){
 
+}
 
 
 

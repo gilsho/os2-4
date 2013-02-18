@@ -197,6 +197,10 @@ start_process (void * init_data_)
 
   struct intr_frame if_;
   bool success;
+  struct thread *t = thread_current();
+
+   /* Set up supplemental page table */
+  page_supplement_init(&t->pst);
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -206,7 +210,7 @@ start_process (void * init_data_)
   success = load (args, &if_.eip, &if_.esp, &(init_data->info->exec_file));
   
   init_data->load_status = success;
-  struct thread *t = thread_current();
+  
   init_data->info->pid = (pid_t) t->tid;
   t->process_info = init_data->info;
   
@@ -219,8 +223,7 @@ start_process (void * init_data_)
     thread_exit ();
   }
     
-   /* Set up supplemental page table */
-  page_supplement_init(&t->pagesup_table);
+  
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -312,6 +315,8 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
+  page_supplement_destroy(&t->pst);
 
   struct process_info *info = t->process_info;  
   
@@ -987,7 +992,7 @@ process_map_page(void *upage, bool writable)
   if(!success)
     palloc_free_page(kpage);
   struct frame_entry *fte = frame_insert(kpage,t->pagedir,upage);
-  page_supplement_set(t->pagedir,upage,fte);
+  page_supplement_set(&t->pst,upage,fte);
   return success;
 }
 
@@ -1001,8 +1006,8 @@ process_unmap_page(void *upage) {
 
   pagedir_clear_page(t->pagedir,upage);
   palloc_free_page(kpage);
-  /*struct frame_entry *fte = page_supplement_get_frame(t->pagedir,upage);
+  struct frame_entry *fte = page_supplement_get_frame(&t->pst,upage);
   frame_remove(fte);
-  page_supplement_free(t->pagedir,upage);*/
+  page_supplement_free(&t->pst,upage);
   return true;
 }

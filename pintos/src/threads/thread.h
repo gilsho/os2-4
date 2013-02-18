@@ -108,7 +108,7 @@ struct thread
 
 #ifdef USERPROG
     uint32_t *pagedir;                  /* Page directory. */
-    struct hash pagesup_table;          /* Supplemental page table */
+    pagesup_table pst;          /* Supplemental page table */
 
     struct process_info *process_info;  /* Process information */
 #endif
