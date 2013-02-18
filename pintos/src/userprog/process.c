@@ -20,7 +20,7 @@
 #include "threads/synch.h"
 #include "threads/malloc.h"
 #include "vm/frame.h"
-#include "vm/page.h"
+#include "vm/pagesup.h"
 
 
 struct lock lock_filesys; /* a coarse global lock restricting access 
@@ -364,6 +364,9 @@ process_activate (void)
 
   /* Activate thread's page tables. */
   pagedir_activate (t->pagedir);
+
+  /* Set up supplemental page table */
+  page_supplement_init(&t->pagesup_table);
 
   /* Set thread's kernel stack for use in processing
      interrupts. */

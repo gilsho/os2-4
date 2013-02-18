@@ -7,6 +7,7 @@
 
 #ifdef USERPROG
 #include "userprog/process.h"
+#include "vm/pagesup.h"
 #include "filesys/file.h"
 #endif
 
@@ -107,13 +108,14 @@ struct thread
 
 #ifdef USERPROG
     uint32_t *pagedir;                  /* Page directory. */
+    struct hash pagesup_table;          /* Supplemental page table */
+
     struct process_info *process_info;  /* Process information */
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
 
-    uint32_t *pagedir_sup               /* Supplemental page table */
   };
 
 
