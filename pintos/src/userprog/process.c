@@ -102,6 +102,7 @@ void release_children_locks(struct process_info *info, void* aux UNUSED);
 bool process_map_page(void *upage, bool writable);
 bool process_unmap_page(void *upage);
 
+
 /* Initializes the process control block.
   Sets process info for the main thread */
 void process_init(void)
@@ -111,8 +112,9 @@ void process_init(void)
   
   ASSERT(result);
   ASSERT(main_info != NULL);
-  
+
   frame_init_table();
+  
   main_info->is_parent_alive = false; /* main thread has no parent */
   
   struct thread *t = thread_current();
@@ -217,6 +219,8 @@ start_process (void * init_data_)
     thread_exit ();
   }
     
+   /* Set up supplemental page table */
+  page_supplement_init(&t->pagesup_table);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -364,9 +368,6 @@ process_activate (void)
 
   /* Activate thread's page tables. */
   pagedir_activate (t->pagedir);
-
-  /* Set up supplemental page table */
-  page_supplement_init(&t->pagesup_table);
 
   /* Set thread's kernel stack for use in processing
      interrupts. */
@@ -740,20 +741,19 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-      /* Get a page of memory and add the page to the 
-         process's address space. */
       if (!process_map_page(upage,writable))
         return false;
-      
-      void *kpage = pagedir_get_page(t->pagedir,upage);
 
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          process_unmap_page(upage);
-          return false; 
-        }
+
+      uint8_t *kpage = pagedir_get_page(t->pagedir, upage);
+
+      if(file_read(file, kpage, page_read_bytes) != (int)page_read_bytes)
+      {
+        process_unmap_page(upage);
+        return false;
+      }
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
+
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -768,14 +768,44 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp) 
 {
+  /*uint8_t *kpage;*/
+  bool success = false;
 
-  bool success = process_map_page(((uint8_t *) PHYS_BASE) - PGSIZE,true);
-  if (success) 
+  success = process_map_page(((uint8_t *) PHYS_BASE) - PGSIZE,true);
+
+  if(success)
     *esp = PHYS_BASE;
-
+  /*kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  if (kpage != NULL) 
+    {
+      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+      if (success)
+        *esp = PHYS_BASE;
+      else
+        palloc_free_page (kpage);
+    }*/
   return success;
 }
 
+/* Adds a mapping from user virtual address UPAGE to kernel
+   virtual address KPAGE to the page table.
+   If WRITABLE is true, the user process may modify the page;
+   otherwise, it is read-only.
+   UPAGE must not already be mapped.
+   KPAGE should probably be a page obtained from the user pool
+   with palloc_get_page().
+   Returns true on success, false if UPAGE is already mapped or
+   if memory allocation fails. */
+static bool
+install_page (void *upage, void *kpage, bool writable)
+{
+  struct thread *t = thread_current ();
+
+  /* Verify that there's not already a page at that virtual
+     address, then map our page there. */
+  return (pagedir_get_page (t->pagedir, upage) == NULL
+          && pagedir_set_page (t->pagedir, upage, kpage, writable));
+}
 
 /* Invoke function 'func' on all processes in the given list, 
    passing along 'aux'. */
@@ -940,12 +970,11 @@ process_remove_file_desc(int fd)
   }
 }
 
-
 bool
 process_map_page(void *upage, bool writable)
 {
   struct thread *t = thread_current();
-
+  bool success = false;
   if (pagedir_get_page (t->pagedir, upage) != NULL)
     return false;
 
@@ -953,10 +982,13 @@ process_map_page(void *upage, bool writable)
   if (kpage == NULL) {
     return false;
   }
-  pagedir_set_page (t->pagedir, upage, kpage, writable);
-  struct frame_entry *fte = frame_insert(kpage,t->pagedir,upage);
+  /*printf("kernel address in map page: %p\n", kpage);*/
+  success = pagedir_set_page (t->pagedir, upage, kpage, writable);
+  if(!success)
+    palloc_free_page(kpage);
+  /* struct frame_entry *fte = frame_insert(kpage,t->pagedir,upage);*/
   /*page_supplement_set(t->pagedir,upage,fte);*/
-  return true;
+  return success;
 }
 
 bool 
@@ -974,27 +1006,3 @@ process_unmap_page(void *upage) {
   page_supplement_free(t->pagedir,upage);*/
   return true;
 }
-
-
-/* OBSOLETE */
-/* Adds a mapping from user virtual address UPAGE to kernel
-   virtual address KPAGE to the page table.
-   If WRITABLE is true, the user process may modify the page;
-   otherwise, it is read-only.
-   UPAGE must not already be mapped.
-   KPAGE should probably be a page obtained from the user pool
-   with palloc_get_page().
-   Returns true on success, false if UPAGE is already mapped or
-   if memory allocation fails. */
-static bool
-install_page (void *upage, void *kpage, bool writable)
-{
-  struct thread *t = thread_current ();
-
-  /* Verify that there's not already a page at that virtual
-     address, then map our page there. */
-  return (pagedir_get_page (t->pagedir, upage) == NULL
-          && pagedir_set_page (t->pagedir, upage, kpage, writable));
-}
-
-
