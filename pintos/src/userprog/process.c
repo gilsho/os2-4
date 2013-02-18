@@ -986,8 +986,8 @@ process_map_page(void *upage, bool writable)
   success = pagedir_set_page (t->pagedir, upage, kpage, writable);
   if(!success)
     palloc_free_page(kpage);
-  /* struct frame_entry *fte = frame_insert(kpage,t->pagedir,upage);*/
-  /*page_supplement_set(t->pagedir,upage,fte);*/
+  struct frame_entry *fte = frame_insert(kpage,t->pagedir,upage);
+  page_supplement_set(t->pagedir,upage,fte);
   return success;
 }
 
