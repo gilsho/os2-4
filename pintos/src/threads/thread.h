@@ -112,6 +112,8 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+
+    uint32_t *pagedir_sup               /* Supplemental page table */
   };
 
 
