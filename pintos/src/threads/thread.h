@@ -16,6 +16,8 @@
 #define MAX_THREAD_OPEN_FILES 128
 #endif
 
+#define MAX_STACK_PAGES (1 << 11)
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -108,8 +110,8 @@ struct thread
 
 #ifdef USERPROG
     uint32_t *pagedir;                  /* Page directory. */
-    pagesup_table pst;          /* Supplemental page table */
-
+    pagesup_table pst;                  /* Supplemental page table */
+    void *stack_base;                /* Count of allocated stack pages */
     struct process_info *process_info;  /* Process information */
 #endif
 

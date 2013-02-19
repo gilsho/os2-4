@@ -4,12 +4,24 @@
 #include "userprog/gdt.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "threads/vaddr.h"
+#include "vm/swap.h"
+#include "userprog/process.h"
+
+#define MIN_STACK_BASE (PHYS_BASE - PGSIZE*MAX_STACK_PAGES)
+#define STACK_EXT_LIMIT 32
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
 static void kill (struct intr_frame *);
 static void page_fault (struct intr_frame *);
+
+bool handle_stack_access(void *fault_addr);
+bool is_stack_legal_access(void *_fault_addr, void *_esp);
+bool is_stack_ext_required(void *_fault_addr, void *_stack_base);
+bool is_stack_ext_allowed(void *_stack_base);
+
 
 /* Registers handlers for interrupts that can be caused by user
    programs.
@@ -148,17 +160,93 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
   
-  /* Make sure we exit with -1 status code if we get an interrupt exception */
-  process_close(-1);
+  /* kernel should never trigger a page fault */
+  ASSERT( user );
+  
+  bool success = true;
+  
+  if (not_present) {
 
-  /* To implement virtual memory, delete the rest of the function
-     body, and replace it with code that brings in the page to
-     which fault_addr refers. */
-  printf ("Page fault at %p: %s error %s page in %s context.\n",
-          fault_addr,
-          not_present ? "not present" : "rights violation",
-          write ? "writing" : "reading",
-          user ? "user" : "kernel");
-  kill (f);
+    void *esp = f->esp;
+
+    if ( is_stack_legal_access(fault_addr, esp) ) {
+      /*printf("legal stack access \n");*/
+      success = handle_stack_access(fault_addr); 
+    }
+    else {
+      /* TODO: check for data/code access, else exit */
+      success = false;
+    }
+  }
+  else {
+    /* write r/o page error */
+    success = false;
+  }
+
+  if (!success)
+  {
+    /* Make sure we exit with -1 status code if we get 
+       an interrupt exception */
+    process_close(-1);
+  
+    /* To implement virtual memory, delete the rest of the function
+       body, and replace it with code that brings in the page to
+       which fault_addr refers. */
+    printf ("Page fault at %p: %s error %s page in %s context.\n",
+            fault_addr,
+            not_present ? "not present" : "rights violation",
+            write ? "writing" : "reading",
+            user ? "user" : "kernel");
+    kill (f);
+  }
 }
+
+bool
+handle_stack_access(void *fault_addr)
+{
+  struct thread *t = thread_current();
+  
+  /*printf("IN HANDLE: thread name: %s\n", t->name);*/
+  
+  if ( is_stack_ext_required(fault_addr, t->stack_base) ) {
+  
+    /*printf("stack ext required\n");*/
+    if ( is_stack_ext_allowed(t->stack_base) ){
+      /*printf("stack ext allowed\n");*/
+      return process_grow_stack();
+    }
+    else /* stack page limit reached */
+      return false;   
+  }
+  else /* retrieve paged stack page from a swap slot */
+    return swap_page_in(t);
+}
+
+
+bool
+is_stack_legal_access(void *_fault_addr, void *_esp)
+{
+  uint8_t *fault_addr = (uint8_t *) _fault_addr;
+  uint8_t *esp        = (uint8_t *) _esp;
+  return (fault_addr >= esp - STACK_EXT_LIMIT);
+}
+  
+bool
+is_stack_ext_required(void *_fault_addr, void *_stack_base)
+{
+  uint8_t *stack_base = (uint8_t *)_stack_base;
+  uint8_t *fault_addr = (uint8_t *)_fault_addr;
+  return fault_addr < stack_base;
+}
+
+bool
+is_stack_ext_allowed(void *_stack_base)
+{
+  /*printf("stack base:     %p\n", _stack_base); */
+  /*printf("MIN_STACK_BASE: %p\n", (uint8_t *)MIN_STACK_BASE);*/
+  uint8_t *stack_base = (uint8_t *)_stack_base;
+  return stack_base >= (uint8_t *)MIN_STACK_BASE;
+}
+
+
 

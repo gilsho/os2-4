@@ -22,6 +22,7 @@
 #include "vm/frame.h"
 #include "vm/pagesup.h"
 
+#define INITIAL_STACK_BASE (((uint8_t *) PHYS_BASE) - PGSIZE)
 
 struct lock lock_filesys; /* a coarse global lock restricting access 
                             to the file system */
@@ -558,6 +559,9 @@ load (const char *args, void (**eip) (void), void **esp, struct file **file)
   if (!setup_stack (esp))
     goto done;
 
+  /* thread's stack is initially a single page */
+  t->stack_base = INITIAL_STACK_BASE;
+
   /* Parse command line arguments and push them onto user stack */
   char *file_name;
   if (!parse_args(args,esp,&file_name))
@@ -774,10 +778,11 @@ setup_stack (void **esp)
   /*uint8_t *kpage;*/
   bool success = false;
 
-  success = process_map_page(((uint8_t *) PHYS_BASE) - PGSIZE,true);
+  success = process_map_page(INITIAL_STACK_BASE,true);
 
   if(success)
     *esp = PHYS_BASE;
+    
   /*kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
     {
@@ -977,7 +982,7 @@ bool
 process_map_page(void *upage, bool writable)
 {
   struct thread *t = thread_current();
-  bool success = false;
+  
   if (pagedir_get_page (t->pagedir, upage) != NULL)
     return false;
 
@@ -986,8 +991,7 @@ process_map_page(void *upage, bool writable)
     return false;
   }
   /*printf("kernel address in map page: %p\n", kpage);*/
-  success = pagedir_set_page (t->pagedir, upage, kpage, writable);
-  if(!success) {
+  if(!pagedir_set_page (t->pagedir, upage, kpage, writable)) {
     palloc_free_page(kpage);
     return false;
   }
@@ -1000,7 +1004,7 @@ process_map_page(void *upage, bool writable)
   /* TODO: check return of page_supplement_set? */
   page_supplement_set(&t->pst,upage,fte);
       
-  return success;
+  return true;
 }
 
 bool 
@@ -1016,5 +1020,20 @@ process_unmap_page(void *upage) {
   struct frame_entry *fte = page_supplement_get_frame(&t->pst,upage);
   frame_remove(fte);
   page_supplement_free(&t->pst,upage);
+  return true;
+}
+
+bool
+process_grow_stack(void)
+{
+  /* printf("growing stack \n"); */
+  struct thread *t = thread_current();
+  ASSERT (pg_ofs (t->stack_base) == 0);
+  
+  void *upage = (void *)((uint8_t *)t->stack_base - PGSIZE);
+  if (!process_map_page(upage, true))
+    return false;
+  t->stack_base = upage;
+  /* printf("stack grown successfully\n"); */
   return true;
 }
