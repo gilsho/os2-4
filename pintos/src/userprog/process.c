@@ -749,7 +749,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       if (!process_map_page(upage,writable))
         return false;
 
-
       uint8_t *kpage = pagedir_get_page(t->pagedir, upage);
 
       if(file_read(file, kpage, page_read_bytes) != (int)page_read_bytes)
@@ -758,7 +757,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
         return false;
       }
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -989,10 +987,19 @@ process_map_page(void *upage, bool writable)
   }
   /*printf("kernel address in map page: %p\n", kpage);*/
   success = pagedir_set_page (t->pagedir, upage, kpage, writable);
-  if(!success)
+  if(!success) {
     palloc_free_page(kpage);
+    return false;
+  }
+  
   struct frame_entry *fte = frame_insert(kpage,t->pagedir,upage);
+    
+  if (fte == NULL)
+    return false;
+    
+  /* TODO: check return of page_supplement_set? */
   page_supplement_set(&t->pst,upage,fte);
+      
   return success;
 }
 

@@ -18,10 +18,15 @@ frame_init_table()
 struct frame_entry *
 frame_insert(uint8_t *kpage,uint32_t *pagedir, uint8_t *upage) 
 {
-	struct frame_entry *fte = malloc(sizeof(struct frame_entry));
-  	fte->kpage = kpage;
-  	fte->pagedir = pagedir;
-  	fte->upage = upage;
+	struct frame_entry *fte = NULL;
+	fte = malloc(sizeof(struct frame_entry));
+	
+	if (fte == NULL)
+	  return fte;
+	
+  fte->kpage = kpage;
+  fte->pagedir = pagedir;
+  fte->upage = upage;
 
 	lock_acquire(&lock_frame);
 	list_push_back(&frame_table,&fte->elem);
@@ -33,8 +38,12 @@ frame_insert(uint8_t *kpage,uint32_t *pagedir, uint8_t *upage)
 void 
 frame_remove(struct frame_entry *fte)
 {
+  lock_acquire(&lock_frame);
 	list_remove(&fte->elem);
+	lock_release(&lock_frame);
+	
 	free(fte);
+	fte = NULL;
 }
 
 
