@@ -7,10 +7,19 @@
 
 typedef struct hash pagesup_table;
 
+enum page_type 
+{
+  ptype_memory,
+  ptype_file
+};
+
 struct pagesup_entry 
 {
+  
 	void *upage;
-	off_t swap_offset;
+	struct file *file;
+	off_t offset;
+	int valid_bytes;
 	struct frame_entry *fte;
 	struct hash_elem elem;
 };

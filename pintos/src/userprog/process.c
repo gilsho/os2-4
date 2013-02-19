@@ -23,6 +23,7 @@
 #include "vm/pagesup.h"
 
 #define INITIAL_STACK_BASE (((uint8_t *) PHYS_BASE) - PGSIZE)
+#define DUMMY_KPAGE = PHYS_BASE
 
 struct lock lock_filesys; /* a coarse global lock restricting access 
                             to the file system */
@@ -48,7 +49,8 @@ struct process_info
                                 file that its thread is running. used to deny
                                 write access to the file while the process is 
                                 running  */ 
-  int next_fd;              /* fd counter localized to this process only */
+  int next_fd;            /* fd counter localized to this process only */
+  mapid_t next_mid;       /* mapid_t counter localized to this process only */
 };
 
 
@@ -750,7 +752,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-      if (!process_map_page(upage,writable))
+      if (!process_map_mempage(upage,writable))
         return false;
 
       uint8_t *kpage = pagedir_get_page(t->pagedir, upage);
@@ -778,7 +780,7 @@ setup_stack (void **esp)
   /*uint8_t *kpage;*/
   bool success = false;
 
-  success = process_map_page(INITIAL_STACK_BASE,true);
+  success = process_map_mempage(INITIAL_STACK_BASE,true);
 
   if(success)
     *esp = PHYS_BASE;
@@ -915,8 +917,9 @@ initialize_process_info(struct process_info **child_info_ptr)
   list_init(&(child_info->fd_list));
 
   child_info->next_fd = FILE_DESCRIPTOR_START;
+  child_info->next_mid = 0;
   child_info->exec_file = NULL;
-  child_info->pid = -1;
+  child_info->pid = -1;     /* will be set later. used to detect errors */
   
   *child_info_ptr = child_info;
   return true;
@@ -979,8 +982,10 @@ process_remove_file_desc(int fd)
 }
 
 bool
-process_map_page(void *upage, bool writable)
+process_map_mempage(void *upage, bool writable)
 {
+  /* return process_map_page(upage, NULL, 0, PGSIZE, writable, ptype_memory); */
+  
   struct thread *t = thread_current();
   
   if (pagedir_get_page (t->pagedir, upage) != NULL)
@@ -1002,7 +1007,107 @@ process_map_page(void *upage, bool writable)
     return false;
     
   /* TODO: check return of page_supplement_set? */
-  page_supplement_set(&t->pst,upage,fte);
+  page_supplement_set(&t->pst, upage, fte, NULL, 0, PGSIZE, ptype_memory);
+      
+  return true;
+}
+
+bool
+process_map_file(void *upage, struct *file, uint32_t file_len)
+{
+  /* compute # of necessary pages */
+  int num_pages = file_len / PGSIZE;
+  if (file_len % PGSIZE > 0)
+    num_pages++;
+  
+  /* check the pagedir to determine if NUM_PAGES 
+     consecutive pages are not used, starting at addr */
+  char *page_ptr = addr;
+  int i;
+  for(i=0; i<num_pages; i++) {
+    if (pagedir_get_page (t->pagedir, page_ptr) != NULL){
+      return false;
+    }
+    page_ptr += PGSIZE;
+  }
+  
+  /* TODO: CHECK PAGESUP INSTEAD OF PAGE TABLE ? */
+    
+  /* insert PTEs with present = 0 */
+  page_ptr = addr;
+  for(i=0; i<num_pages; i++) {
+    if (!pagedir_set_page (t->pagedir, page_ptr, DUMMY_KPAGE, true)){
+      return false;
+    }
+    pagedir_clear_page (t->pagedir, page_ptr);
+    page_ptr += PGSIZE;
+  }
+  
+  /* insert pagesup entries  */
+  page_ptr = addr;
+  for(i=0; i<num_pages; i++) {
+  }
+
+  /* stuff */
+  offset_t offset;
+  int valid_bytes;
+  
+  
+  /*return process_map_page(upage, file, offset, valid_byte, true, ptype_file);*/
+  
+  if(!pagedir_set_page (t->pagedir, upage, kpage, writable)) {
+    palloc_free_page(kpage);
+    return false;
+  }
+  
+  
+  struct frame_entry *fte = frame_insert(kpage,t->pagedir,upage);
+    
+  if (fte == NULL)
+    return false;
+    
+  /* TODO: check return of page_supplement_set? */
+  page_supplement_set(&t->pst, upage, fte, file, offset, valid_bytes);
+  
+  /* clear the PTE present bit if necessary */
+  if (!present)
+    pagedir_clear_page (t->pagedir, upage);
+      
+  return true;
+}
+
+bool
+process_map_page(void *upage, struct file *file, 
+                 offset_t offset, int valid_bytes,
+                 bool writable, page_type type)
+{
+  struct thread *t = thread_current();
+  
+  if (pagedir_get_page (t->pagedir, upage) != NULL)
+    return false;
+
+  void *kpage = palloc_get_page(PAL_USER | PAL_ZERO);
+  if (kpage == NULL) {
+    return false;
+  }
+  /*printf("kernel address in map page: %p\n", kpage);*/
+  if(!pagedir_set_page (t->pagedir, upage, kpage, writable)) {
+    palloc_free_page(kpage);
+    return false;
+  }
+  
+  
+  struct frame_entry *fte = frame_insert(kpage,t->pagedir,upage);
+    
+  if (fte == NULL)
+    return false;
+    
+  /* TODO: check return of page_supplement_set? */
+  page_supplement_set(&t->pst, upage, fte, file, offset, valid_bytes);
+  
+  /* clear the PTE present bit if necessary */
+  if (!present)
+    pagedir_clear_page (t->pagedir, upage);
       
   return true;
 }
@@ -1031,7 +1136,7 @@ process_grow_stack(void)
   ASSERT (pg_ofs (t->stack_base) == 0);
   
   void *upage = (void *)((uint8_t *)t->stack_base - PGSIZE);
-  if (!process_map_page(upage, true))
+  if (!process_map_mempage(upage, true))
     return false;
   t->stack_base = upage;
   /* printf("stack grown successfully\n"); */

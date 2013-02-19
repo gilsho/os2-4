@@ -24,7 +24,7 @@ page_supplement_init(pagesup_table *pst)
 /* Creates a new mapping in PST for the given UPAGE and FTE. */
 /* TODO: return a value? */
 void 
-page_supplement_set(pagesup_table *pst, uint8_t *upage, struct frame_entry *fte)
+page_supplement_set(pagesup_table *pst, uint8_t *upage, struct frame_entry *fte, page_type type)
 {
 	/* check if page already exists in table */
 	struct pagesup_entry *pse = NULL;

@@ -11,6 +11,7 @@
 #include "devices/shutdown.h"
 #include <string.h>
 #include "devices/input.h"
+#include "vm/mmap.h"
 
 #define FILENAME_MAX 14
 
@@ -36,7 +37,8 @@ bool sys_write(int *stack, uint32_t *eax);
 bool sys_seek(int *stack);
 bool sys_tell(int *stack, uint32_t *eax);
 bool sys_close(int *stack);
-
+bool sys_mmap(int *stack, uint32_t *eax);
+bool sys_munmap(int *stack);
 
 
 void
@@ -98,9 +100,12 @@ syscall_handler (struct intr_frame *f)
 			break; 
 
     /* Project 3 and optionally project 4. */
-    	case SYS_MMAP:                 /* Map a file into memory. */
-    	case SYS_MUNMAP:               /* Remove a memory mapping. */
-
+    case SYS_MMAP:                 /* Map a file into memory. */
+      succes = sys_mmap(ustack, ueax);
+    	break;
+    case SYS_MUNMAP:               /* Remove a memory mapping. */
+      success = sys_munmap(ustack);
+      break;
     /* Project 4 only. */
     	case SYS_CHDIR:                /* Change the current directory. */
     	case SYS_MKDIR:                /* Create a directory. */
@@ -477,3 +482,43 @@ bool sys_close(int *stack)
 	return true;	
 }
 
+
+bool
+sys_mmap(int *stack, uint32_t *eax)
+{
+  int fd = pop_arg(&stack);
+  char *addr = (char *)pop_arg(&stack);
+  
+  /* addr must not be 0 (reserved) */
+  if (addr == 0)
+    return false;
+  
+  /* address must be page-aligned */
+  if (pg_ofs((void *)addr) != 0)
+    return false;
+  
+  struct file *file = process_get_file_desc(fd)
+  if (file == NULL)
+    return false;
+  
+  uint32_t file_len;
+	lock_acquire(&lock_filesys);
+	file_len = (uint32_t) file_length (file);
+	lock_release(&lock_filesys);
+  
+  mapid_t mid = mmap_insert(...);
+  
+
+  
+	/* push syscall result to the user program */
+  memcpy(eax, &mid, sizeof(uint32_t));
+  
+  return true;
+}
+
+bool
+sys_munmap(int *stack)
+{
+  
+  return true;
+}
