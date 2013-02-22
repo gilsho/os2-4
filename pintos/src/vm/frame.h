@@ -3,18 +3,20 @@
 
 
 #include <inttypes.h>
-#include <list.h>
+#include <hash.h>
+#include "vm/pagesup.h"
+#include "threads/thread.h"
 
 struct frame_entry 
 {
 	uint8_t *kpage;
-	uint32_t *pagedir;
-	uint8_t *upage;
-	struct list_elem elem;
+	struct thread *owner;
+	void *upage;
+	struct hash_elem elem;
 };
 
 void frame_init_table(void);
-struct frame_entry *frame_insert(uint8_t *kpage,uint32_t *pagedir, uint8_t *upage);
+void frame_insert(struct thread *t, uint8_t *upage,uint8_t *kpage);
 void frame_remove(struct frame_entry *fte);
 
 

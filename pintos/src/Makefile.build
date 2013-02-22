@@ -66,6 +66,7 @@ vm_SRC  = vm/pagesup.c
 vm_SRC += vm/frame.c
 vm_SRC += vm/swap.c
 vm_SRC += vm/mmap.c
+vm_SRC += vm/vman.c
 
 # Filesystem code.
 filesys_SRC  = filesys/filesys.c	# Filesystem core.

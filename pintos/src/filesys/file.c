@@ -3,6 +3,12 @@
 #include "filesys/inode.h"
 #include "threads/malloc.h"
 
+#if (DEBUG & DEBUG_FILE_READ)
+#define PRINT_FILE_READ_2(X,Y) {printf("file_read: "); printf(X,Y);}
+#else
+#define PRINT_FILE_READ_2(X,Y) do{} while (0)
+#endif
+
 /* An open file. */
 struct file 
   {
@@ -68,8 +74,11 @@ file_get_inode (struct file *file)
 off_t
 file_read (struct file *file, void *buffer, off_t size) 
 {
+  PRINT_FILE_READ_2("buffer: %p\n",buffer);
+  PRINT_FILE_READ_2("size: %d\n",size);
   off_t bytes_read = inode_read_at (file->inode, buffer, size, file->pos);
   file->pos += bytes_read;
+  PRINT_FILE_READ_2("bytes_read: %d\n",bytes_read);
   return bytes_read;
 }
 

@@ -9,13 +9,10 @@ typedef struct hash mmap_table;
 struct mmap_entry 
 {
   mapid_t mid;
-	void *upage;
-	struct *file;
+	void *upage;						/* start page */
+	struct file *file;
 	int filesize;
 	struct hash_elem elem;
 };
-
-bool
-mmap_
 
 #endif

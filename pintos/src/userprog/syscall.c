@@ -12,8 +12,15 @@
 #include <string.h>
 #include "devices/input.h"
 #include "vm/mmap.h"
+#include "vm/pagesup.h"
 
 #define FILENAME_MAX 14
+
+#if (DEBUG & DEBUG_SYS_CALL)
+#define PRINT_SYS_READ_2(X,Y) {printf("sys_read: "); printf(X,Y);}
+#else
+#define PRINT_SYS_READ_2(X,Y) do {} while(0)
+#endif
 
 extern struct lock lock_filesys;
 
@@ -23,6 +30,7 @@ static void syscall_handler (struct intr_frame *);
 int pop_arg(int **ustack_);
 bool valid_user_addr(void *uaddr);
 bool valid_str(const char *s, unsigned max_len);
+bool valid_range(void *_uaddr_start,void *_uaddr_end,bool check_writable);
 
 bool sys_halt(int *stack);
 bool sys_exit(int *stack);
@@ -101,7 +109,7 @@ syscall_handler (struct intr_frame *f)
 
     /* Project 3 and optionally project 4. */
     case SYS_MMAP:                 /* Map a file into memory. */
-      succes = sys_mmap(ustack, ueax);
+      success = sys_mmap(ustack, ueax);
     	break;
     case SYS_MUNMAP:               /* Remove a memory mapping. */
       success = sys_munmap(ustack);
@@ -144,6 +152,28 @@ pop_arg(int **ustack)
 	return arg;
 }
 
+bool
+valid_range(void *_uaddr_start,void *_uaddr_end,bool check_writable)
+{
+	uint8_t *uaddr = (uint8_t *) _uaddr_start;
+	uint8_t *uaddr_end = (uint8_t *) _uaddr_end;
+	struct thread *t = thread_current();
+	while (uaddr <= uaddr_end) {
+		void *upage = pg_round_down(uaddr);
+		if (!page_supplement_is_mapped(t->pst,upage))
+			return false;
+
+		if(check_writable) {
+			struct pagesup_entry *pse = page_supplement_get_entry(t->pst,upage);
+			if (!page_supplement_is_writable(pse))
+				return false;
+		}
+
+		uaddr += PGSIZE;
+	}
+	return true;
+}
+
 /* Performs checks to make sure we our pointer
 	is a valid user address. */
 bool 
@@ -155,8 +185,8 @@ valid_user_addr(void *uaddr)
 	if (!is_user_vaddr(uaddr))
 		return false;
 
-	uint32_t *pd = thread_current()->pagedir;
-	if (!pagedir_get_page (pd,uaddr))
+	pagesup_table *pst = thread_current()->pst;
+	if (!page_supplement_is_mapped(pst,uaddr))
 		return false;
 
 	return true;
@@ -343,8 +373,14 @@ bool sys_read(int *stack, uint32_t *eax)
 	
 	char *buffer_end = ((char *) buffer) + size;
 
+	PRINT_SYS_READ_2("buffer: %p, ",buffer);
+	PRINT_SYS_READ_2("buffer_end: %p\n", buffer_end);
+	PRINT_SYS_READ_2("valid_user_addr(buffer): %d, ", valid_user_addr(buffer));
+	PRINT_SYS_READ_2("valid_user_addr(buffer_end): %d\n",valid_user_addr(buffer_end));
+
 	if (!valid_user_addr(buffer) ||
-		!valid_user_addr(buffer_end))
+		!valid_user_addr(buffer_end) ||
+		!valid_range(buffer,buffer_end,true))
 	  return false;
 	  
 	unsigned bytes_read = 0;  
@@ -364,6 +400,8 @@ bool sys_read(int *stack, uint32_t *eax)
 	{
 	  /* check for invalid file or STDOUT */
 	  struct file *file = process_get_file_desc(fd);
+	  PRINT_SYS_READ_2("fd: %d, ",fd);
+	  PRINT_SYS_READ_2("file (after opening): %p\n", file);
 	  if (file == NULL || fd == 1)
 	  {
 	    result = false;
@@ -393,7 +431,8 @@ bool sys_write(int *stack, uint32_t *eax)
 	void *buffer_end = ((char *) buffer) + size;
 
 	if (!valid_user_addr((void *)buffer) ||
-		!valid_user_addr(buffer_end))
+		!valid_user_addr(buffer_end) ||
+		!valid_range(buffer,buffer_end,false))
 	  return false;
 
 	unsigned bytes_written = 0;
@@ -497,7 +536,7 @@ sys_mmap(int *stack, uint32_t *eax)
   if (pg_ofs((void *)addr) != 0)
     return false;
   
-  struct file *file = process_get_file_desc(fd)
+  struct file *file = process_get_file_desc(fd);
   if (file == NULL)
     return false;
   
@@ -506,7 +545,7 @@ sys_mmap(int *stack, uint32_t *eax)
 	file_len = (uint32_t) file_length (file);
 	lock_release(&lock_filesys);
   
-  mapid_t mid = mmap_insert(...);
+  mapid_t mid = -1;/*mmap_insert(...);*/
   
 
   
@@ -517,7 +556,7 @@ sys_mmap(int *stack, uint32_t *eax)
 }
 
 bool
-sys_munmap(int *stack)
+sys_munmap(int *stack UNUSED)
 {
   
   return true;

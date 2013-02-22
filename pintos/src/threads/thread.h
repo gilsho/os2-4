@@ -110,8 +110,8 @@ struct thread
 
 #ifdef USERPROG
     uint32_t *pagedir;                  /* Page directory. */
-    pagesup_table pst;                  /* Supplemental page table */
-    void *stack_base;                /* Count of allocated stack pages */
+    struct pagesup_table *pst;                  /* Supplemental page table */
+    void *stack_base;                   /* bottom of allocated stack segment */
     struct process_info *process_info;  /* Process information */
 #endif
 

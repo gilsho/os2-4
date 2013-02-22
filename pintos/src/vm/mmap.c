@@ -1,19 +1,25 @@
 #include "mmap.h"
+#include <debug.h>
 #include <hash.h>
+#include "threads/malloc.h"
 
 /* reserve all pages for a mmap file up front 
    using user-specified address,
    set to not-present, 
    load lazily */
-   
-
-
+ 
+void mmap_init(mmap_table *mmt) ;
 bool mmap_cmp(const struct hash_elem *a,
               const struct hash_elem *b,
               void *aux);
+mapid_t mmap_insert(mmap_table *mmt, void *upage);
+struct mmap_entry *mmap_get_frame(mmap_table *mmt, mapid_t mid);
+void mmap_free(mmap_table *mmt, mapid_t mid);
+struct mmap_entry *mmap_find_entry(mmap_table *mmt, mapid_t mid);
 
 unsigned mmap_hash(const struct hash_elem *e, void *aux UNUSED);
 struct mmap_entry *mmap_find_entry(mmap_table *mmt, mapid_t mid);
+void mmap_destroy(mmap_table *mmt UNUSED);
 
 
 void 
@@ -42,15 +48,15 @@ mmap_insert(mmap_table *mmt, void *upage)
 	  PANIC("mme already in mmap_table.\n");
 }
 
-/* Returns the FTE associated with the give MID in the 
+/* Returns the MME associated with the give MID in the 
    mmap table MMT, or NULL if none exists.*/
 struct mmap_entry *
-mmap_get_frame(mmap_table *mmt, mapid_t *mid)
+mmap_get_frame(mmap_table *mmt, mapid_t mid)
 {
 	struct mmap_entry *mme = mmap_find_entry(mmt, mid);
 	if (mme == NULL)
 		return NULL;
-	return mme->fte;
+	return mme;
 }
 
 

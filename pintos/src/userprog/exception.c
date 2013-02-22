@@ -6,10 +6,26 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "vm/swap.h"
+#include "vm/vman.h"
 #include "userprog/process.h"
+#include <debug.h>
+#include <inttypes.h>
+#include <round.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #define MIN_STACK_BASE (PHYS_BASE - PGSIZE*MAX_STACK_PAGES)
 #define STACK_EXT_LIMIT 32
+
+
+
+#if (DEBUG & DEBUG_PAGE_FAULT)
+#define PRINT_PFAULT(X) printf(X)
+#define PRINT_PFAULT_2(X,Y) printf(X,Y)
+#else
+#define PRINT_PFAULT(X) do {} while(0)
+#define PRINT_PFAULT_2(X,Y) do {} while(0)
+#endif
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -22,6 +38,8 @@ bool is_stack_legal_access(void *_fault_addr, void *_esp);
 bool is_stack_ext_required(void *_fault_addr, void *_stack_base);
 bool is_stack_ext_allowed(void *_stack_base);
 
+bool is_mem_mapped(void *_fault_addr);
+bool handle_mem_access(void *_fault_addr);
 
 /* Registers handlers for interrupts that can be caused by user
    programs.
@@ -159,9 +177,13 @@ page_fault (struct intr_frame *f)
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
+
+  PRINT_PFAULT_2("page_fault: not_present: %d, ",not_present);
+  PRINT_PFAULT_2("user: %d, ",user);
+  PRINT_PFAULT_2("addr: %p\n",fault_addr);
   
-  /* kernel should never trigger a page fault */
-  ASSERT( user );
+  /* kernel should never trigger a page fault. guess we were wrong... */
+  /* ASSERT( user ); */
   
   bool success = true;
   
@@ -170,11 +192,15 @@ page_fault (struct intr_frame *f)
     void *esp = f->esp;
 
     if ( is_stack_legal_access(fault_addr, esp) ) {
-      /*printf("legal stack access \n");*/
+      PRINT_PFAULT("page_fault: legal stack access \n");
       success = handle_stack_access(fault_addr); 
     }
-    else {
-      /* TODO: check for data/code access, else exit */
+    else if ( is_mem_mapped(fault_addr) ){
+      PRINT_PFAULT("page_fault:legal mem access \n");
+      success = handle_mem_access(fault_addr);
+    }
+    else{
+      PRINT_PFAULT("page_fault:bad stuff happened.\n");
       success = false;
     }
   }
@@ -213,7 +239,7 @@ handle_stack_access(void *fault_addr)
     /*printf("stack ext required\n");*/
     if ( is_stack_ext_allowed(t->stack_base) ){
       /*printf("stack ext allowed\n");*/
-      return process_grow_stack();
+      return vman_grow_stack();
     }
     else /* stack page limit reached */
       return false;   
@@ -248,5 +274,18 @@ is_stack_ext_allowed(void *_stack_base)
   return stack_base >= (uint8_t *)MIN_STACK_BASE;
 }
 
+bool
+is_mem_mapped(void *_fault_addr)
+{
+  void *upage = pg_round_down(_fault_addr);
+  return !vman_upage_available(upage);
+}
 
+bool
+handle_mem_access(void *_fault_addr)
+{
+  void *upage = pg_round_down(_fault_addr);
+  vman_load_page(upage);
+  return true;
+}
 

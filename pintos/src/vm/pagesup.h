@@ -9,24 +9,39 @@ typedef struct hash pagesup_table;
 
 enum page_type 
 {
-  ptype_memory,
+  ptype_stack,
+  ptype_segment,
+  ptype_segment_readonly,
   ptype_file
 };
 
 struct pagesup_entry 
 {
-  
-	void *upage;
+	void *upage; 	/* used to generate hash */
+	void *kpage;
 	struct file *file;
 	off_t offset;
 	int valid_bytes;
-	struct frame_entry *fte;
 	struct hash_elem elem;
+	enum page_type ptype;
 };
 
 void page_supplement_init(pagesup_table *pst);
-void page_supplement_set(pagesup_table *pst, uint8_t *upage, struct frame_entry *fte);
-struct frame_entry *page_supplement_get_frame(pagesup_table *pst, uint8_t *upage);
+
+bool page_supplement_is_mapped(pagesup_table *pst, void *uaddr);
+
+struct pagesup_entry *page_supplement_get_entry(pagesup_table *pst, void *upage);
+
+void page_supplement_install_filepage(pagesup_table *pst, uint8_t *upage, struct file *file, 
+															 off_t offset, int valid_bytes);
+
+void page_supplement_install_segpage(pagesup_table *pst, void *upage,int valid_bytes, struct file *file,
+																		 off_t offset, bool writable);
+
+void page_supplement_install_stackpage(pagesup_table *pst, uint8_t *upage);
+
+bool page_supplement_is_writable(struct pagesup_entry *pse);
+
 void page_supplement_free(pagesup_table *pst, uint8_t *upage);
 
 void page_supplement_destroy(pagesup_table *pst);

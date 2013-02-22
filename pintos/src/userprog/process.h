@@ -2,6 +2,7 @@
 #define USERPROG_PROCESS_H
 
 #include "filesys/filesys.h"
+#include "vm/vman.h"
 
 typedef int pid_t;
 
@@ -15,7 +16,5 @@ void process_init(void);
 int process_add_file_desc(struct file *file);
 struct file* process_get_file_desc(int fd);
 void process_remove_file_desc(int fd);
-
-bool process_grow_stack(void);
 
 #endif /* userprog/process.h */
