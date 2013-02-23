@@ -215,6 +215,11 @@ start_process (void * init_data_)
   ASSERT(t->pst != NULL);
   page_supplement_init(t->pst);
 
+  /* Set up the memory mapped file table */
+  t->mmt = (mmap_table *) malloc (sizeof(mmap_table));
+  ASSERT(t->mmt != NULL);
+  mmap_init(t->mmt);
+
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -953,4 +958,10 @@ process_remove_file_desc(int fd)
       return;
     }
   }
+}
+
+/* Add FILE to the mem-mapped file table for the current process */
+mapid_t process_map_file(struct file * file, uint32_t file_len)
+{
+  
 }

@@ -545,14 +545,14 @@ sys_mmap(int *stack, uint32_t *eax)
 	file_len = (uint32_t) file_length (file);
 	lock_release(&lock_filesys);
   
-  mapid_t mid = -1;/*mmap_insert(...);*/
+  mapid_t mid = process_map_file(file, filelen);
   
-
+  success = (mid != -1);
   
 	/* push syscall result to the user program */
   memcpy(eax, &mid, sizeof(uint32_t));
   
-  return true;
+  return success;
 }
 
 bool

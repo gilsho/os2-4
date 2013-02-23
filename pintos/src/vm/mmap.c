@@ -8,11 +8,12 @@
    set to not-present, 
    load lazily */
  
-void mmap_init(mmap_table *mmt) ;
 bool mmap_cmp(const struct hash_elem *a,
               const struct hash_elem *b,
               void *aux);
 mapid_t mmap_insert(mmap_table *mmt, void *upage);
+
+
 struct mmap_entry *mmap_get_frame(mmap_table *mmt, mapid_t mid);
 void mmap_free(mmap_table *mmt, mapid_t mid);
 struct mmap_entry *mmap_find_entry(mmap_table *mmt, mapid_t mid);
