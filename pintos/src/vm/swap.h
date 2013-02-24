@@ -1,8 +1,12 @@
 #ifndef VM_SWAP_H
 #define VM_SWAP_H
 
-#include "threads/thread.h"
+#include <filesys/off_t.h>
 
-bool swap_page_in(struct thread *t);
+
+struct file *swap_file;
+
+off_t swap_get_slot(void);
+
 
 #endif

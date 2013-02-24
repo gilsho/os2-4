@@ -3,6 +3,7 @@
 
 #include "filesys/off_t.h"
 #include <hash.h>
+#include "threads/synch.h"
 
 typedef struct hash pagesup_table;
 
@@ -22,6 +23,8 @@ struct pagesup_entry
 	off_t offset;
 	int valid_bytes;
 	enum page_type ptype;
+	struct thread *owner;
+	struct lock lock;
 	struct hash_elem pagesup_elem;
 	struct list_elem frame_elem;
 };

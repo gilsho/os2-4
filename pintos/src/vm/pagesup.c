@@ -3,6 +3,7 @@
 #include "vm/pagesup.h"
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
+#include "threads/thread.h"
 
 
 #if (DEBUG & DEBUG_IS_MAPPED)
@@ -35,6 +36,8 @@ void page_supplement_install_filepage(pagesup_table *pst, void *upage,int valid_
 	pse->valid_bytes = valid_bytes;
 	pse->kpage = NULL;
 	pse->ptype = ptype_file;
+	pse->owner = thread_current();
+	lock_init(&pse->lock);
 	struct hash_elem *he = hash_insert(pst, &(pse->pagesup_elem));
 	ASSERT (he == NULL);
 }
@@ -50,6 +53,8 @@ page_supplement_install_stackpage(pagesup_table *pst, uint8_t *upage)
 	pse->valid_bytes = PGSIZE;
 	pse->kpage = NULL;
 	pse->ptype = ptype_stack;
+	pse->owner = thread_current();
+	lock_init(&pse->lock);
 	struct hash_elem *he = hash_insert(pst, &(pse->pagesup_elem));
 	ASSERT (he == NULL)
 }
@@ -65,6 +70,8 @@ page_supplement_install_segpage(pagesup_table *pst,void *upage,int valid_bytes, 
 	pse->valid_bytes = valid_bytes;
 	pse->kpage = NULL;
 	pse->ptype = writable ? ptype_segment : ptype_segment_readonly;
+	pse->owner = thread_current();
+	lock_init(&pse->lock);
 	struct hash_elem *he = hash_insert(pst, &(pse->pagesup_elem));
 	ASSERT (he == NULL);
 }

@@ -1,9 +1,12 @@
 #include <stdio.h>
 #include "swap.h"
 
-bool
-swap_page_in(struct thread *t UNUSED)
+
+
+off_t 
+swap_get_slot(void)
 {
-  printf("swapping not yet supported.\n");
-  return false;
+	return (off_t) 0;
 }
+
+
