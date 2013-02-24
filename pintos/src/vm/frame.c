@@ -1,62 +1,54 @@
 #include "vm/frame.h"
-#include "userprog/pagedir.h"
+#include "vm/pagesup.h"
 #include "threads/synch.h"
-#include "threads/malloc.h"
-#include <hash.h>
+#include "threads/palloc.h"
 #include <stdio.h>
 
-static struct hash frame_table;
-
-unsigned frame_hash(const struct hash_elem *e, void *aux UNUSED);
-bool frame_cmp(const struct hash_elem *a,
-            						const struct hash_elem *b,
-                    		void *aux UNUSED);
+static struct list frame_list;
+struct lock lock_frame;
+struct list_elem *clock_hand;
 
 void 
 frame_init_table() 
 {
-	hash_init(&frame_table, &frame_hash, &frame_cmp, NULL);
+	lock_init(&lock_frame);
+	list_init(&frame_list);
 }
 
-bool 
-frame_cmp(const struct hash_elem *a,
-            						const struct hash_elem *b,
-                    		void *aux UNUSED)
-{
-	struct frame_entry *fte_a = hash_entry(a, struct frame_entry,elem);
-	struct frame_entry *fte_b = hash_entry(b, struct frame_entry,elem);
-	return fte_a->kpage < fte_b->kpage;
-}
+void *
+frame_alloc(void)
+{	
+	void *kpage = palloc_get_page(PAL_USER | PAL_ZERO);
+  if (kpage == NULL) 
+  {
+  	PANIC("eviction not implemented");
 
-unsigned 
-frame_hash(const struct hash_elem *e, void *aux UNUSED)
-{
-	struct frame_entry *fte = hash_entry(e, struct frame_entry,elem);
-	return hash_int((int) fte->kpage);
-}
+  	lock_acquire(&lock_frame);
 
+  	lock_release(&lock_frame);
+  }
+}
 
 void
-frame_insert(struct thread *t, uint8_t *upage,uint8_t *kpage)
+frame_install(struct pagesup_entry *pse, void *kpage)
 {
-	struct frame_entry *fte = malloc(sizeof(struct frame_entry));
-	ASSERT (fte != NULL);
-  
-  fte->kpage = kpage;
-  fte->owner = t;
-  fte->upage = upage;
-
-	hash_insert(&frame_table,&(fte->elem));
+	pse->kpage = kpage;
+	lock_acquire(&lock_frame);
+	list_push_back(&frame_list,&pse->frame_elem);
+	lock_release(&lock_frame);
 }
 
 void 
-frame_remove(struct frame_entry *fte)
+frame_remove(struct pagesup_entry *pse)
 {
-	/*list_remove(&fte->elem);*/
+	lock_acquire(&lock_frame);
+
+	if (pse->kpage != NULL) {
+		list_remove(&pse->frame_elem);
+		palloc_free_page (pse->kpage);
+	}
+	pse->kpage = NULL;
 	
-	free(fte);
-	fte = NULL;
+	lock_release(&lock_frame);
 }
-
-
 

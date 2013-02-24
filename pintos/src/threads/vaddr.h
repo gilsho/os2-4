@@ -86,4 +86,14 @@ vtop (const void *vaddr)
   return (uintptr_t) vaddr - (uintptr_t) PHYS_BASE;
 }
 
+/* Returns the number of pages that span the given number of bytes */
+static inline int
+num_pages(int bytes)
+{
+  ASSERT(bytes >= 0);
+  int npages = bytes/PGSIZE;
+  npages += (bytes % PGSIZE == 0) ? 0 : 1;
+  return npages;
+}
+
 #endif /* threads/vaddr.h */

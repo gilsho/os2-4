@@ -24,12 +24,14 @@ void debug_backtrace_all (void);
 #define DEBUG_FILE_READ				(1 << 4)
 #define DEBUG_SYS_CALL				(1 << 5)
 #define DEBUG_IS_MAPPED				(1 << 6)
+#define DEBUG_UNMAP_FILE			(1 << 7)
+#define DEBUG_MAP_FILE 				(1 << 8)
 
 /*#define DEBUG (DEBUG_STACK | DEBUG_PAGE_FAULT | DEBUG_MAP_SEGMENT | DEBUG_FILE_READ | DEBUG_SYS_CALL \
 							 | DEBUG_IS_MAPPED)*/
 
 /*#define DEBUG (DEBUG_STACK | DEBUG_PAGE_FAULT) */
-
+/*#define DEBUG (DEBUG_MAP_FILE | DEBUG_UNMAP_FILE | DEBUG_PAGE_FAULT)*/
 
 
 

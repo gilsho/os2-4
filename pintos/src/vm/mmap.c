@@ -2,6 +2,7 @@
 #include <debug.h>
 #include <hash.h>
 #include "threads/malloc.h"
+#include "threads/vaddr.h"
 
 /* reserve all pages for a mmap file up front 
    using user-specified address,
@@ -11,15 +12,10 @@
 bool mmap_cmp(const struct hash_elem *a,
               const struct hash_elem *b,
               void *aux);
-mapid_t mmap_insert(mmap_table *mmt, void *upage);
 
-
-struct mmap_entry *mmap_get_frame(mmap_table *mmt, mapid_t mid);
 void mmap_free(mmap_table *mmt, mapid_t mid);
 struct mmap_entry *mmap_find_entry(mmap_table *mmt, mapid_t mid);
-
 unsigned mmap_hash(const struct hash_elem *e, void *aux UNUSED);
-struct mmap_entry *mmap_find_entry(mmap_table *mmt, mapid_t mid);
 void mmap_destroy(mmap_table *mmt UNUSED);
 
 
@@ -29,42 +25,11 @@ mmap_init(mmap_table *mmt)
 	hash_init(mmt, &mmap_hash, &mmap_cmp, NULL);
 }
 
-/* Creates a new mapping in MMT for the given UPAGE. */
-/* TODO: return a value? */
-mapid_t
-mmap_insert(mmap_table *mmt, void *upage)
-{
-	/* check if upage already mapped in table */
-	struct mmap_entry *mme = NULL;
-
-	
-	mme = malloc(sizeof(struct mmap_entry));
-	if (mme == NULL)
-	  PANIC("unable to allocate mme in mmap_set.\n");
-	  
-	/* TODO: set mme fields here */  
-	
-	struct hash_elem *he = hash_insert(mmt, &mme->elem);
-	if (he != NULL)
-	  PANIC("mme already in mmap_table.\n");
-}
-
-/* Returns the MME associated with the give MID in the 
-   mmap table MMT, or NULL if none exists.*/
-struct mmap_entry *
-mmap_get_frame(mmap_table *mmt, mapid_t mid)
-{
-	struct mmap_entry *mme = mmap_find_entry(mmt, mid);
-	if (mme == NULL)
-		return NULL;
-	return mme;
-}
-
 
 void 
 mmap_free(mmap_table *mmt, mapid_t mid)
 {
-	struct mmap_entry *mme = mmap_find_entry(mmt, mid);
+	struct mmap_entry *mme = mmap_get_entry(mmt, mid);
 	ASSERT (mme != NULL);
 	hash_delete(mmt, &mme->elem);
 	free(mme);
@@ -72,7 +37,7 @@ mmap_free(mmap_table *mmt, mapid_t mid)
 
 
 struct mmap_entry *
-mmap_find_entry(mmap_table *mmt, mapid_t mid)
+mmap_get_entry(mmap_table *mmt, mapid_t mid)
 {
 	struct mmap_entry temp;
 	temp.mid = mid;
@@ -107,4 +72,23 @@ mmap_destroy(mmap_table *mmt UNUSED){
 
 }
 
+
+void mmap_install_file(mmap_table *mmt, mapid_t mid, void *upage, struct file *file, uint32_t file_len)
+{
+	/* check if upage already mapped in table */
+	struct mmap_entry *mme = NULL;
+	
+	mme = malloc(sizeof(struct mmap_entry));
+	if (mme == NULL)
+	  PANIC("unable to allocate mme in mmap_install_file.\n");
+	  
+	mme->mid = mid;
+	mme->upage = upage;						/* start page */
+	mme->file = file;			/* file handler */
+	mme->file_len = file_len;						/* byte-size of file */
+	
+	struct hash_elem *he = hash_insert(mmt, &mme->elem);
+	if (he != NULL)
+	  PANIC("mme already in mmap_table.\n");
+}
 

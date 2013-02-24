@@ -18,9 +18,18 @@
 
 #if (DEBUG & DEBUG_SYS_CALL)
 #define PRINT_SYS_READ_2(X,Y) {printf("sys_read: "); printf(X,Y);}
+#define PRINT_SYS_MMAP_2(X,Y) {printf("sys_mmap: "); printf(X,Y);}
+#define PRINT_SYS_MMAP(X) printf(X)
+#define PRINT_VALID(X) printf(X)
+#define PRINT_VALID_2(X,Y) {printf("valid: "); printf(X,Y);}
 #else
 #define PRINT_SYS_READ_2(X,Y) do {} while(0)
+#define PRINT_SYS_MMAP(X) do {} while(0)
+#define PRINT_SYS_MMAP_2(X,Y) do {} while(0)
+#define PRINT_VALID(X) do {} while(0)
+#define PRINT_VALID_2(X,Y) do {} while(0)
 #endif
+
 
 extern struct lock lock_filesys;
 
@@ -30,6 +39,7 @@ static void syscall_handler (struct intr_frame *);
 int pop_arg(int **ustack_);
 bool valid_user_addr(void *uaddr);
 bool valid_str(const char *s, unsigned max_len);
+bool is_user_buffer(void *s, unsigned len);
 bool valid_range(void *_uaddr_start,void *_uaddr_end,bool check_writable);
 
 bool sys_halt(int *stack);
@@ -160,11 +170,11 @@ valid_range(void *_uaddr_start,void *_uaddr_end,bool check_writable)
 	struct thread *t = thread_current();
 	while (uaddr <= uaddr_end) {
 		void *upage = pg_round_down(uaddr);
-		if (!page_supplement_is_mapped(t->pst,upage))
+		if (!page_supplement_is_mapped(&t->pst,upage))
 			return false;
 
 		if(check_writable) {
-			struct pagesup_entry *pse = page_supplement_get_entry(t->pst,upage);
+			struct pagesup_entry *pse = page_supplement_get_entry(&t->pst,upage);
 			if (!page_supplement_is_writable(pse))
 				return false;
 		}
@@ -185,7 +195,7 @@ valid_user_addr(void *uaddr)
 	if (!is_user_vaddr(uaddr))
 		return false;
 
-	pagesup_table *pst = thread_current()->pst;
+	pagesup_table *pst = &(thread_current()->pst);
 	if (!page_supplement_is_mapped(pst,uaddr))
 		return false;
 
@@ -225,6 +235,25 @@ valid_str(const char *s, unsigned max_len)
       return true;
   }
   return false;
+}
+
+/* assumes _s is page aligned */
+bool 
+is_user_buffer(void *upage, unsigned len)
+{	
+	char *s = (char *)upage;
+
+  int npages = num_pages(len);
+  int i;
+  for (i=0; i<npages; i++) {
+  	if (!is_user_vaddr(s)) {
+  		PRINT_VALID_2("invalid buffer: %p\n", s);
+  		return false;
+  	}
+    s += PGSIZE;
+  }
+  
+ 	return true;
 }
 
 /* Halt the operating system. */
@@ -335,6 +364,12 @@ bool sys_open(int *stack, uint32_t *eax)
 	int fd = -1;
 	if (f != NULL)
 	  fd = process_add_file_desc(f);
+
+	if (fd < 0) {
+		lock_acquire(&lock_filesys);
+		file_close (f);
+		lock_release(&lock_filesys);
+	}
 	
 	/* push syscall result to the user program */
   memcpy(eax, &fd, sizeof(uint32_t));
@@ -425,7 +460,7 @@ bool sys_write(int *stack, uint32_t *eax)
 {
   bool result = true;
 	int fd = pop_arg(&stack);
-	const void *buffer = (const void *) pop_arg(&stack);
+	void *buffer = (void *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
 
 	void *buffer_end = ((char *) buffer) + size;
@@ -527,37 +562,52 @@ sys_mmap(int *stack, uint32_t *eax)
 {
   int fd = pop_arg(&stack);
   char *addr = (char *)pop_arg(&stack);
-  
-  /* addr must not be 0 (reserved) */
-  if (addr == 0)
-    return false;
-  
-  /* address must be page-aligned */
-  if (pg_ofs((void *)addr) != 0)
-    return false;
-  
-  struct file *file = process_get_file_desc(fd);
-  if (file == NULL)
-    return false;
-  
-  uint32_t file_len;
-	lock_acquire(&lock_filesys);
-	file_len = (uint32_t) file_length (file);
-	lock_release(&lock_filesys);
-  
-  mapid_t mid = process_map_file(file, filelen);
-  
-  success = (mid != -1);
+
+  mapid_t mid = -1;
+
+  PRINT_SYS_MMAP_2("fd: %d,",fd);
+  PRINT_SYS_MMAP_2("addr: %p\n",addr);
+
+  /* addr must not be 0 (reserved) and must be page-aligned 
+  	 and the user vaddr range is valid */
+  if ( (addr != 0) && (pg_ofs((void *)addr) == 0) )
+  {
+  	struct file *old_file = process_get_file_desc(fd);
+  	if (old_file != NULL)
+  	{
+		  struct file *file = file_reopen (old_file);
+
+		  PRINT_SYS_MMAP_2("file: %p,",file);
+
+		  if (file != NULL)
+		  {
+			  uint32_t file_len;
+				lock_acquire(&lock_filesys);
+				file_len = (uint32_t) file_length (file);
+				lock_release(&lock_filesys);
+				PRINT_SYS_MMAP_2("file_len: %d\n",file_len);
+
+				/* verify that file_len is nonzero and memory range is valid user space */
+				if ( file_len > 0 && is_user_buffer(addr, file_len))
+				{	
+					PRINT_SYS_MMAP("obtaining mid in sys_mmap\n");
+			    mid = process_map_file(addr, file, file_len);
+			    PRINT_SYS_MMAP_2("mid = %d\n", mid);
+			  }
+			}
+		}
+	}
   
 	/* push syscall result to the user program */
   memcpy(eax, &mid, sizeof(uint32_t));
-  
-  return success;
+
+  return true;
 }
 
 bool
-sys_munmap(int *stack UNUSED)
+sys_munmap(int *stack)
 {
-  
-  return true;
+  mapid_t mid = (mapid_t)pop_arg(&stack);
+
+  return process_unmap_file(mid);
 }

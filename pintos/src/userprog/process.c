@@ -34,7 +34,7 @@
 #endif
 
 struct lock lock_filesys; /* a coarse global lock restricting access 
-                            to the file system */
+                                  to the file system */
 
 /* This struct contains all the information related to a process */
 struct process_info
@@ -59,6 +59,7 @@ struct process_info
                                 running  */ 
   int next_fd;            /* fd counter localized to this process only */
   mapid_t next_mid;       /* mapid_t counter localized to this process only */
+  mmap_table mmt;       /* Hash table of memory mapped files */
 };
 
 
@@ -210,15 +211,8 @@ start_process (void * init_data_)
   bool success;
   struct thread *t = thread_current();
 
-   /* Set up supplemental page table */
-  t->pst = (pagesup_table *) malloc(sizeof(pagesup_table));
-  ASSERT(t->pst != NULL);
-  page_supplement_init(t->pst);
-
-  /* Set up the memory mapped file table */
-  t->mmt = (mmap_table *) malloc (sizeof(mmap_table));
-  ASSERT(t->mmt != NULL);
-  mmap_init(t->mmt);
+  /* initialize supplementary page table */
+  page_supplement_init(&(t->pst));
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -293,7 +287,8 @@ process_close(int status){
 }
 
 /* Close all files currently opened by the exiting thread */
-void close_open_files(struct process_info *info){
+void 
+close_open_files(struct process_info *info){
    /* close all open files */
   struct list_elem *e;
 
@@ -310,12 +305,42 @@ void close_open_files(struct process_info *info){
   }
 }
 
+/* Unmap any mem-mapped files for the current process */
+void
+unmap_mm_files(struct process_info *info){
+
+  struct hash_iterator i;
+
+  hash_first (&i, &info->mmt);
+
+  struct hash_elem *e;
+  struct hash_elem *ne;
+
+  for (e = hash_next(&i); e != NULL;)
+  {    
+    struct mmap_entry *mme = hash_entry (hash_cur (&i), struct mmap_entry, elem);
+    vman_unmap_file(mme->upage, mme->file_len);
+
+    ne = hash_next(&i);
+    free(mme);
+    e = ne;
+  }
+}
+
+
 /* Free the current process's resources. */
 void
 process_exit (void)
 {
   struct thread *t = thread_current ();
   uint32_t *pd;
+
+  struct process_info *info = t->process_info; 
+
+  /* Unmap any mem-mapped files */
+  unmap_mm_files(info);
+
+  page_supplement_destroy(&t->pst); 
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -333,10 +358,6 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-
-  page_supplement_destroy(&t->pst);
-
-  struct process_info *info = t->process_info;  
   
   /* Close any files opened by this process */
   close_open_files(info);
@@ -684,8 +705,6 @@ load (const char *args, void (**eip) (void), void **esp, struct file **file)
 
 /* load() helpers. */
 
-static bool install_page (void *upage, void *kpage, bool writable);
-
 /* Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
 static bool
@@ -774,26 +793,6 @@ setup_stack (void **esp)
     *esp = PHYS_BASE;
     
   return success;
-}
-
-/* Adds a mapping from user virtual address UPAGE to kernel
-   virtual address KPAGE to the page table.
-   If WRITABLE is true, the user process may modify the page;
-   otherwise, it is read-only.
-   UPAGE must not already be mapped.
-   KPAGE should probably be a page obtained from the user pool
-   with palloc_get_page().
-   Returns true on success, false if UPAGE is already mapped or
-   if memory allocation fails. */
-static bool
-install_page (void *upage, void *kpage, bool writable)
-{
-  struct thread *t = thread_current ();
-
-  /* Verify that there's not already a page at that virtual
-     address, then map our page there. */
-  return (pagedir_get_page (t->pagedir, upage) == NULL
-          && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
 
 /* Invoke function 'func' on all processes in the given list, 
@@ -894,6 +893,7 @@ initialize_process_info(struct process_info **child_info_ptr)
   cond_init(&(child_info->cond));
   list_init(&(child_info->children));
   list_init(&(child_info->fd_list));
+  mmap_init(&(child_info->mmt));
 
   child_info->next_fd = FILE_DESCRIPTOR_START;
   child_info->next_mid = 0;
@@ -961,7 +961,47 @@ process_remove_file_desc(int fd)
 }
 
 /* Add FILE to the mem-mapped file table for the current process */
-mapid_t process_map_file(struct file * file, uint32_t file_len)
+mapid_t 
+process_map_file(void *upage, struct file * file, uint32_t file_len)
 {
+  /* 
+  1. try to allocate pages in supp table
+  2. generate next mapid_t
+  3. install file into mem-mapped file table
+  */
+
+  if (! vman_map_file(upage, file, file_len))
+    return -1;
+
+
+  struct process_info *info = thread_current()->process_info;
+  mapid_t mid = info->next_mid;
+  info->next_mid++;
+
+  mmap_install_file(&(info->mmt), mid, upage, file, file_len);
+
+  return mid;
+}
+
+/* remove the file associated with MID from the mem-mapped file table for the current process */
+bool
+process_unmap_file(mapid_t mid)
+{
+  /*
+  1. check if mid is valid mme identifier
+  2. uninstall user pages from supplementary table
+  4. remove mme from mmt & free the mme struct
+  */
+
+  struct process_info *info = thread_current()->process_info;
+  struct mmap_entry *mme = mmap_get_entry(&info->mmt, mid);
   
+  if ( mme == NULL )
+    return false;
+
+  vman_unmap_file(mme->upage, mme->file_len);
+
+  mmap_free(&info->mmt, mid);
+
+  return true;
 }

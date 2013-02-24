@@ -7,8 +7,10 @@
 
 #ifdef USERPROG
 #include "userprog/process.h"
+#include <hash.h>
 #include "vm/pagesup.h"
 #include "filesys/file.h"
+
 #endif
 
 #ifdef USERPROG
@@ -110,9 +112,8 @@ struct thread
 
 #ifdef USERPROG
     uint32_t *pagedir;                  /* Page directory. */
-    struct pagesup_table *pst;                  /* Supplemental page table */
+    pagesup_table pst;                  /* Supplemental page table */
     void *stack_base;                   /* bottom of allocated stack segment */
-    struct mmap_table *mmt;                    /* Hash table of memory mapped files */
     struct process_info *process_info;  /* Process information */
 #endif
 
