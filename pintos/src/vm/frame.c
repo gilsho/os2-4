@@ -141,6 +141,7 @@ frame_evict(struct pagesup_entry *pse)
 	uint32_t *pd = pse->owner->pagedir;
 
 	bool dirty = pagedir_is_dirty (pd, pse->upage);
+	pagedir_clear_page (pd, pse->upage);
 
 	struct list_elem *e = list_remove(&pse->frame_elem);
 	ASSERT( e != NULL );
@@ -177,7 +178,6 @@ frame_evict(struct pagesup_entry *pse)
 		default:
 			break;
 	}
-	pagedir_clear_page (pd, pse->upage);
 	ASSERT(pse->ploc != ploc_memory);
 }
 
