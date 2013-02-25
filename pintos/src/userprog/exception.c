@@ -284,7 +284,7 @@ bool
 is_mem_mapped(void *_fault_addr)
 {
   void *upage = pg_round_down(_fault_addr);
-  return !vman_upages_available(upage, 1);
+  return !vman_upages_unmapped(upage, 1);
 }
 
 bool

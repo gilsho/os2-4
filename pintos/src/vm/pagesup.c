@@ -118,7 +118,8 @@ page_supplement_is_mapped(pagesup_table *pst, void *uaddr)
 bool 
 page_supplement_is_writable(struct pagesup_entry *pse)
 {
-	return (pse->ptype != ptype_segment_readonly);
+	bool writable = (pse->ptype != ptype_segment_readonly);
+	return writable;
 }
 
 bool 

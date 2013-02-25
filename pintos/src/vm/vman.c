@@ -62,6 +62,7 @@
 
 extern struct lock lock_filesys; /* a coarse global lock restricting access 
                             to the file system */
+extern struct lock lock_frame;
 
 void vman_init(void)
 {
@@ -69,7 +70,7 @@ void vman_init(void)
 }
 
 bool 
-vman_upages_available(void *upage_head, int npages)
+vman_upages_unmapped(void *upage_head, int npages)
 {
 	ASSERT (pg_ofs (upage_head) == 0);
 	struct thread *t = thread_current();
@@ -93,7 +94,7 @@ vman_map_file(void *upage, struct file *file, uint32_t file_len)
 	PRINT_MAP_FILE_2("file_len: %d, ",file_len);
 	PRINT_MAP_FILE_2("npages: %d\n",npages);
 
-	if (!vman_upages_available(upage, npages))
+	if (!vman_upages_unmapped(upage, npages))
 		return false;
 
 	int bytes_remaining = file_len;
@@ -124,7 +125,7 @@ vman_map_segment (void *upage, struct file *file, off_t offset, int init_data_by
 	PRINT_MAP_SEGMENT_2("uninit_data_bytes: %d, ",uninit_data_bytes);	
 	PRINT_MAP_SEGMENT_2("npages: %d\n",npages);
 
-	if (!vman_upages_available(upage, npages))
+	if (!vman_upages_unmapped(upage, npages))
 		return false;
 
 	file_seek (file, offset);
@@ -148,13 +149,14 @@ void
 vman_load_page(void *upage)
 {
 	struct thread *t = thread_current();
-	ASSERT(!vman_upages_available(upage, 1));
+  struct pagesup_entry *pse = page_supplement_get_entry(&t->pst, upage); 
+
+	lock_acquire(&lock_frame);
+	lock_acquire(&pse->lock);
+
+	ASSERT(pse->ploc != ploc_memory);
 
 	void *kpage = frame_alloc();
-
-  /* udpate frame & page supplementary tables */
-  struct pagesup_entry *pse = page_supplement_get_entry(&t->pst, upage);
-  ASSERT(pse->ploc != ploc_memory);
 
   /* load the actual data from an external location if necessary */
   off_t bytes_read;
@@ -195,12 +197,15 @@ vman_load_page(void *upage)
   		break;
   }
 
-  pse->ploc = ploc_memory;
-  frame_install(pse, kpage);
-
   /* update page directory */
   bool writable = page_supplement_is_writable(pse);
   pagedir_set_page(t->pagedir, upage, kpage, writable);
+
+	pse->ploc = ploc_memory;
+  frame_install(pse, kpage);
+
+  lock_release(&pse->lock);
+  lock_release(&lock_frame);
 
   PRINT_LOAD_PAGE("finished loading page\n");
 	/*
@@ -231,7 +236,7 @@ vman_grow_stack(void)
   /* get rid of this once we EVICTION is implemented */
   ASSERT(pagedir_get_page(t->pagedir,upage) == NULL);
 
-  if (!vman_upages_available(upage, 1))
+  if (!vman_upages_unmapped(upage, 1))
   	return false;
 
 	page_supplement_install_stackpage(&t->pst,upage);
@@ -255,7 +260,10 @@ vman_unmap_file(void *upage, uint32_t file_len)
 
 		void *cur_upage = (void *)(((uint8_t *)upage) + i*PGSIZE);
 
+		lock_acquire(&lock_frame);
+
 		pse = page_supplement_get_entry(pst, cur_upage);
+		lock_acquire(&pse->lock);
 		ASSERT( pse != NULL);
 
 		PRINT_UNMAP_FILE_2("cur_upage: %p\n", cur_upage);
@@ -266,8 +274,11 @@ vman_unmap_file(void *upage, uint32_t file_len)
 		PRINT_UNMAP_FILE_2("pse->valid_bytes: %d\n", pse->valid_bytes);
 		PRINT_UNMAP_FILE_2("pse->ptype: %d\n", pse->ptype);
 
+		/*frame_evict(pse);*/
+
 		/* write to disk if necessary */
-		if (pse->kpage != NULL && pagedir_is_dirty (pd, cur_upage)){
+		
+		if (pse->ploc == ploc_memory && pagedir_is_dirty (pd, cur_upage)){
 			lock_acquire(&lock_filesys);
 			off_t bytes_written = file_write_at (pse->info.f.file, pse->kpage, 
 																					 pse->valid_bytes, pse->info.f.offset);
@@ -281,6 +292,10 @@ vman_unmap_file(void *upage, uint32_t file_len)
 		/* free the physical frame & frame table entry */
 		frame_release(pse);
 
+		lock_release(&pse->lock);
+
+		lock_release(&lock_frame);
+
 		/* remove the supplemental page table entry */
 		page_supplement_free(pst, pse);
 	}
@@ -290,5 +305,7 @@ void
 vman_free_all_pages(void)
 {
 	pagesup_table *pst = &(thread_current()->pst);
+	lock_acquire(&lock_frame);
 	page_supplement_destroy(pst, &frame_release);
+	lock_release(&lock_frame);
 }

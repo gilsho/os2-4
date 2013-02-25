@@ -13,5 +13,6 @@ void *frame_alloc(void);
 void frame_install(struct pagesup_entry *pse, void *kpage);
 void frame_remove(struct pagesup_entry *pse);
 void frame_release(struct pagesup_entry *pse);
+void frame_evict(struct pagesup_entry *pse);
 
 #endif /* vm/frame.h */

@@ -35,7 +35,7 @@ void debug_backtrace_all (void);
 /*#define DEBUG (DEBUG_STACK | DEBUG_PAGE_FAULT) */
 /*#define DEBUG (DEBUG_MAP_FILE | DEBUG_UNMAP_FILE | DEBUG_PAGE_FAULT)*/
 /*#define DEBUG DEBUG_PAGE_FAULT | DEBUG_SWAP */
-
+/*#define DEBUG DEBUG_MAP_FILE */
 
 #endif
 
