@@ -24,13 +24,22 @@
 #include "vm/frame.h"
 #include "vm/pagesup.h"
 #include "vm/mmap.h"
+#include "vm/swap.h"
 
 #if (DEBUG & DEBUG_STACK)
-#define PRINT_GROW_STACK(__VA_ARGS__) printf(__VA_ARGS__)
+#define PRINT_GROW_STACK(X) printf(X)
 #define PRINT_GROW_STACK_2(X,Y) {printf("vman_grow_stack: "); printf(X,Y);}
 #else
 #define PRINT_GROW_STACK(X) do {} while(0)
 #define PRINT_GROW_STACK_2(X,Y) do {} while(0)
+#endif
+
+#if (DEBUG & DEBUG_STACK)
+#define PRINT_LOAD_PAGE(X) printf(X)
+#define PRINT_LOAD_PAGE_2(X,Y) {printf("vman_load_page: "); printf(X,Y);}
+#else
+#define PRINT_LOAD_PAGE(X) do {} while(0)
+#define PRINT_LOAD_PAGE_2(X,Y) do {} while(0)
 #endif
 
 #if (DEBUG & DEBUG_MAP_SEGMENT)
@@ -145,35 +154,55 @@ vman_load_page(void *upage)
 
   /* udpate frame & page supplementary tables */
   struct pagesup_entry *pse = page_supplement_get_entry(&t->pst, upage);
-  frame_install(pse, kpage);
+  ASSERT(pse->ploc != ploc_memory);
 
-  /* load the actual data */
+  /* load the actual data from an external location if necessary */
   off_t bytes_read;
   switch (pse->ptype) {
   	case ptype_stack:
+  		PRINT_LOAD_PAGE("need to load STACK page\n");
+  		PRINT_LOAD_PAGE_2("upage: %p\n", pse->upage);
+  		PRINT_LOAD_PAGE_2("kpage: %p\n", pse->kpage);
+  		if(pse->ploc == ploc_swap)
+  		{
+  			PRINT_LOAD_PAGE_2("swap index: %d\n", (int)pse->info.s.slot_index);
+  			swap_read_slot(pse->info.s.slot_index, kpage);
+  		}
   		break;
   	case ptype_segment:
-  		bytes_read = file_read_at (pse->file, kpage, pse->valid_bytes, pse->offset);
-  		ASSERT(bytes_read == pse->valid_bytes);
-  		memset(kpage + pse->valid_bytes,0,PGSIZE-pse->valid_bytes);
-  		pse->valid_bytes = PGSIZE;
-  		pse->file = NULL;
-  		pse->offset = -1;
+  		ASSERT(pse->ploc != ploc_none);
+  		if (pse->ploc == ploc_file)
+  		{
+  			PRINT_LOAD_PAGE_2("loading segment page from file: %p\n", pse->info.f.file);
+  			PRINT_LOAD_PAGE_2("-> kpage: %p\n", pse->kpage);
+	  		bytes_read = file_read_at (pse->info.f.file, kpage, pse->valid_bytes, pse->info.f.offset);
+	  		ASSERT(bytes_read == pse->valid_bytes);
+	  		memset(kpage + pse->valid_bytes,0,PGSIZE-pse->valid_bytes);
+	  		pse->valid_bytes = PGSIZE;
+  		}
+  		else if(pse->ploc == ploc_swap)
+  		{
+  			PRINT_LOAD_PAGE("loading segment from swap\n");
+  			PRINT_LOAD_PAGE_2("-> swap slot: %d\n", (int)pse->info.s.slot_index);
+  			swap_read_slot(pse->info.s.slot_index, kpage);
+  		}
   		break;
    	case ptype_segment_readonly:
+   		PRINT_LOAD_PAGE("loading READONLY segment\n");
   	case ptype_file:
-  		bytes_read = file_read_at (pse->file, kpage, pse->valid_bytes, pse->offset);
+  		bytes_read = file_read_at (pse->info.f.file, kpage, pse->valid_bytes, pse->info.f.offset);
   		ASSERT(bytes_read == pse->valid_bytes);
   		break;
   }
 
+  pse->ploc = ploc_memory;
+  frame_install(pse, kpage);
+
   /* update page directory */
   bool writable = page_supplement_is_writable(pse);
   pagedir_set_page(t->pagedir, upage, kpage, writable);
-  pse->kpage = kpage;
 
-
-
+  PRINT_LOAD_PAGE("finished loading page\n");
 	/*
 		1. validation:
 				- check that pst is installed, and is not loaded (fte == NULL)
@@ -189,7 +218,6 @@ vman_load_page(void *upage)
 	*/
 
 }
-
 
 bool 
 vman_grow_stack(void)
@@ -233,15 +261,16 @@ vman_unmap_file(void *upage, uint32_t file_len)
 		PRINT_UNMAP_FILE_2("cur_upage: %p\n", cur_upage);
 		PRINT_UNMAP_FILE_2("pse->upage: %p\n", pse->upage);
 		PRINT_UNMAP_FILE_2("pse->kpage: %p\n", pse->kpage);
-		PRINT_UNMAP_FILE_2("pse->file: %p\n", pse->file);
-		PRINT_UNMAP_FILE_2("pse->offset: %d\n", pse->offset);
+		PRINT_UNMAP_FILE_2("pse->file: %p\n", pse->info.f.file);
+		PRINT_UNMAP_FILE_2("pse->offset: %d\n", pse->info.f.offset);
 		PRINT_UNMAP_FILE_2("pse->valid_bytes: %d\n", pse->valid_bytes);
 		PRINT_UNMAP_FILE_2("pse->ptype: %d\n", pse->ptype);
 
 		/* write to disk if necessary */
 		if (pse->kpage != NULL && pagedir_is_dirty (pd, cur_upage)){
 			lock_acquire(&lock_filesys);
-			off_t bytes_written = file_write (pse->file, pse->kpage, pse->valid_bytes);
+			off_t bytes_written = file_write_at (pse->info.f.file, pse->kpage, 
+																					 pse->valid_bytes, pse->info.f.offset);
 			lock_release(&lock_filesys);
 			ASSERT(bytes_written == pse->valid_bytes); 
 		}
@@ -250,9 +279,16 @@ vman_unmap_file(void *upage, uint32_t file_len)
 		pagedir_clear_page (pd, cur_upage);
 
 		/* free the physical frame & frame table entry */
-		frame_remove(pse);
+		frame_release(pse);
 
 		/* remove the supplemental page table entry */
 		page_supplement_free(pst, pse);
 	}
+}
+
+void
+vman_free_all_pages(void)
+{
+	pagesup_table *pst = &(thread_current()->pst);
+	page_supplement_destroy(pst, &frame_release);
 }

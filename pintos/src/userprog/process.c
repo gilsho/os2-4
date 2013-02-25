@@ -320,6 +320,7 @@ unmap_mm_files(struct process_info *info){
   {    
     struct mmap_entry *mme = hash_entry (hash_cur (&i), struct mmap_entry, elem);
     vman_unmap_file(mme->upage, mme->file_len);
+    file_close(mme->file);
 
     ne = hash_next(&i);
     free(mme);
@@ -340,7 +341,8 @@ process_exit (void)
   /* Unmap any mem-mapped files */
   unmap_mm_files(info);
 
-  page_supplement_destroy(&t->pst); 
+  /* destroy supplementary PTEs and free any frames */
+  vman_free_all_pages();
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */

@@ -15,6 +15,7 @@ void vman_unmap_file(void *upage, uint32_t file_len);
 bool vman_grow_stack(void);
 void vman_load_page(void *upage);
 bool vman_unmap(void *upage,int npages);
+void vman_free_all_pages(void);
 
 #endif /* vm/vman.h */
 

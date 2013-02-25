@@ -1,9 +1,12 @@
 
 #include <debug.h>
+#include <stdio.h>
 #include "vm/pagesup.h"
+#include "vm/frame.h"
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
 #include "threads/thread.h"
+
 
 
 #if (DEBUG & DEBUG_IS_MAPPED)
@@ -17,6 +20,7 @@ bool page_supplement_cmp(const struct hash_elem *a,
                     		void *aux);
 
 unsigned page_supplement_hash(const struct hash_elem *e, void *aux UNUSED);
+void destroy_helper (struct hash_elem *e, void *aux);
 
 
 void 
@@ -31,12 +35,13 @@ void page_supplement_install_filepage(pagesup_table *pst, void *upage,int valid_
 	struct pagesup_entry *pse = malloc(sizeof(struct pagesup_entry));
 	ASSERT(pse != NULL);
 	pse->upage = upage;
-	pse->file = file;
-	pse->offset = offset;
+	pse->ptype = ptype_file;
+	pse->ploc = ploc_file;
+	pse->owner = thread_current();
 	pse->valid_bytes = valid_bytes;
 	pse->kpage = NULL;
-	pse->ptype = ptype_file;
-	pse->owner = thread_current();
+	pse->info.f.file = file;
+	pse->info.f.offset = offset;
 	lock_init(&pse->lock);
 	struct hash_elem *he = hash_insert(pst, &(pse->pagesup_elem));
 	ASSERT (he == NULL);
@@ -48,12 +53,11 @@ page_supplement_install_stackpage(pagesup_table *pst, uint8_t *upage)
 	struct pagesup_entry *pse = malloc(sizeof(struct pagesup_entry));
 	ASSERT(pse != NULL);
 	pse->upage = upage;
-	pse->file = NULL;
-	pse->offset = -1;
+	pse->ptype = ptype_stack;
+	pse->ploc = ploc_none;
+	pse->owner = thread_current();
 	pse->valid_bytes = PGSIZE;
 	pse->kpage = NULL;
-	pse->ptype = ptype_stack;
-	pse->owner = thread_current();
 	lock_init(&pse->lock);
 	struct hash_elem *he = hash_insert(pst, &(pse->pagesup_elem));
 	ASSERT (he == NULL)
@@ -65,19 +69,20 @@ page_supplement_install_segpage(pagesup_table *pst,void *upage,int valid_bytes, 
 	struct pagesup_entry *pse = malloc(sizeof(struct pagesup_entry));
 	ASSERT(pse != NULL);
 	pse->upage = upage;
-	pse->file = file;
-	pse->offset = offset;
+	pse->ptype = writable ? ptype_segment : ptype_segment_readonly;
+	pse->ploc = ploc_file;
 	pse->valid_bytes = valid_bytes;
 	pse->kpage = NULL;
-	pse->ptype = writable ? ptype_segment : ptype_segment_readonly;
 	pse->owner = thread_current();
+	pse->info.f.file = file;
+	pse->info.f.offset = offset;
 	lock_init(&pse->lock);
 	struct hash_elem *he = hash_insert(pst, &(pse->pagesup_elem));
 	ASSERT (he == NULL);
 }
 
 
-/* MUST be called before upage is freed */
+/* MUST be called before upage is set to NULL */
 void 
 page_supplement_free(pagesup_table *pst, struct pagesup_entry *pse)
 {
@@ -107,8 +112,6 @@ page_supplement_is_mapped(pagesup_table *pst, void *uaddr)
 {
 	void *upage = pg_round_down(uaddr);
 	struct pagesup_entry *pse = page_supplement_get_entry(pst,upage);
-	PRINT_IS_MAPPED_2("pg_round_down(uaddr): %p, ",upage);
-	PRINT_IS_MAPPED_2("pse: %p\n",pse);
 	return (pse != NULL);
 }
 
@@ -123,28 +126,33 @@ page_supplement_cmp(const struct hash_elem *a,
             						const struct hash_elem *b,
                     		void *aux UNUSED)
 {
-	struct pagesup_entry *pse_a = hash_entry(a, struct pagesup_entry,pagesup_elem);
-	struct pagesup_entry *pse_b = hash_entry(b, struct pagesup_entry,pagesup_elem);
+	struct pagesup_entry *pse_a = hash_entry(a, struct pagesup_entry, pagesup_elem);
+	struct pagesup_entry *pse_b = hash_entry(b, struct pagesup_entry, pagesup_elem);
 	return pse_a->upage < pse_b->upage;
 }
 
 unsigned 
 page_supplement_hash(const struct hash_elem *e, void *aux UNUSED)
 {
-	struct pagesup_entry *pse = hash_entry(e, struct pagesup_entry,pagesup_elem);
+	struct pagesup_entry *pse = hash_entry(e, struct pagesup_entry, pagesup_elem);
 	return hash_int((int) pse->upage);
 }
 
 void
-page_supplement_destroy(pagesup_table *pst UNUSED){
-
+page_supplement_destroy(pagesup_table *pst, pse_destroy_func *func)
+{
+	pst->aux = func;
+	hash_destroy (pst, &destroy_helper); 
 }
 
-
-
-
-
-
-
+void
+destroy_helper (struct hash_elem *e, void *aux)
+{
+	struct pagesup_entry *pse = hash_entry(e, struct pagesup_entry, pagesup_elem);
+	
+	pse_destroy_func *frame_release_handle = (pse_destroy_func *)aux;
+	frame_release_handle(pse);
+	pse->ploc = ploc_none;
+}
 
 

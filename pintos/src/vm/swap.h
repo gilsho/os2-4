@@ -3,10 +3,9 @@
 
 #include <filesys/off_t.h>
 
-
-struct file *swap_file;
-
-off_t swap_get_slot(void);
-
+void swap_init(void);
+void swap_read_slot(size_t slot_idx, void *kpage);
+size_t swap_write_slot(void *kpage);
+void swap_release_slot(size_t slot_idx);
 
 #endif

@@ -245,7 +245,11 @@ handle_stack_access(void *fault_addr)
       return false;   
   }
   else /* retrieve paged stack page from a swap slot */
+  {
+    PRINT_PFAULT_2("stack fault addr: %p\n", fault_addr);
+    PRINT_PFAULT_2("->page bottom: %p\n", pg_round_down(fault_addr));
     vman_load_page(pg_round_down(fault_addr));
+  }
 
   return true;
 }

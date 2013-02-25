@@ -15,19 +15,45 @@ enum page_type
   ptype_file
 };
 
+enum page_location
+{
+	ploc_none,
+	ploc_memory,
+	ploc_file,
+	ploc_swap
+};
+
+struct file_info
+{
+	struct file *file;
+	off_t offset;
+};
+
+struct swap_info
+{
+	size_t slot_index;
+};
+
+union pagesup_info {
+	struct file_info f;
+	struct swap_info s;	
+};
+
 struct pagesup_entry 
 {
 	void *upage; 	/* used to generate hash */
 	void *kpage;
-	struct file *file;
-	off_t offset;
 	int valid_bytes;
 	enum page_type ptype;
+	enum page_location ploc;
 	struct thread *owner;
 	struct lock lock;
 	struct hash_elem pagesup_elem;
 	struct list_elem frame_elem;
+	union pagesup_info info;
 };
+
+typedef void pse_destroy_func (struct pagesup_entry *pse);
 
 void page_supplement_init(pagesup_table *pst);
 
@@ -47,6 +73,6 @@ bool page_supplement_is_writable(struct pagesup_entry *pse);
 
 void page_supplement_free(pagesup_table *pst, struct pagesup_entry *pse);
 
-void page_supplement_destroy(pagesup_table *pst);
+void page_supplement_destroy(pagesup_table *pst, pse_destroy_func *func);
 
 #endif /* vm/page.h */
