@@ -38,24 +38,47 @@ FirstName LastName: contribution
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+page supplemental table
+
 ---- ALGORITHMS ----
 
 >> A2: In a few paragraphs, describe your code for locating the frame,
 >> if any, that contains the data of a given page.
 
+a thread has a page supplemental table, which contains a pointer to the
+kernel address of the frame containing the page, given that the page in
+in memory.
+-> upage is the hash key in the page supplemental table
+
 >> A3: How does your code coordinate accessed and dirty bits between
 >> kernel and user virtual addresses that alias a single frame, or
 >> alternatively how do you avoid the issue?
+
+We are avoiding the issue. we only access memory in kernel using 
+the kernel address.
+-> we may  need to set dirty+accessed manually in write, ad set
+accessed in sys_read. OFFICE HOURS. need to check if we need to
+do this elsewhere
+
+
 
 ---- SYNCHRONIZATION ----
 
 >> A4: When two user processes both need a new frame at the same time,
 >> how are races avoided?
 
+lock_frame is acquired prior to allocating a new frame, and is held 
+throughout the process of eviction (if necessary) and re-mapping the 
+frame to the new process
+
 ---- RATIONALE ----
 
 >> A5: Why did you choose the data structure(s) that you did for
 >> representing virtual-to-physical mappings?
+
+-> page_supplemental table is hash for quick look up
+- frame table (trick with two struct elems in pse) is list 
+for consistent iteration.
 
 		       PAGING TO AND FROM DISK
 		       =======================
@@ -66,18 +89,44 @@ FirstName LastName: contribution
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+frame table
+swap bitmap.
+
+THE UNION
+
 ---- ALGORITHMS ----
 
 >> B2: When a frame is required but none is free, some frame must be
 >> evicted.  Describe your code for choosing a frame to evict.
 
+clock_algorithm. jump over pin pages, also skip pages that are currently
+being updates to avoid blocking in the middle of eviction (lock_try_acquire).
+and race conditions (invariant: always acquire frame lock before pse locks).
+skip accessed bits and clear them. 
+--> look at frame_alloc
+
+
 >> B3: When a process P obtains a frame that was previously used by a
 >> process Q, how do you adjust the page table (and any other data
->> structures) to reflect the frame Q no longer has?
+>> structures) to reflect that frame Q no longer has it?
+
+we also take it off the frame list (the struct).
+pse->ploc = ploc_swap OR ploc_file.
+--> don't forget to put the page_location enum in B1.
+--> look at frame_evict
+
 
 >> B4: Explain your heuristic for deciding whether a page fault for an
 >> invalid virtual address should cause the stack to be extended into
 >> the page that faulted.
+
+we keep track of stack_base (don't forget to include this in B1 or somewhere).
+and if it's a legal access (up to 32 bytes below esp), then we allocate a new
+page. also we check that we didn't exceed the max stack size (MIN_STACK_BASE).
+-->exception.c: is_valid_stack_access
+-->exception.c: handle_stack_access.
+
+check legal access->check extension required->check is extension allowed.
 
 ---- SYNCHRONIZATION ----
 
@@ -86,21 +135,43 @@ FirstName LastName: contribution
 >> textbook for an explanation of the necessary conditions for
 >> deadlock.)
 
+we always matain a hierarachy in locks. ALWAYS get the frame lock
+before acquiring pse locks. skip over acquired pse locks. breaks
+condition 4 of deadlocks: circularity.
+
+IDE?
+
 >> B6: A page fault in process P can cause another process Q's frame
 >> to be evicted.  How do you ensure that Q cannot access or modify
 >> the page during the eviction process?  How do you avoid a race
 >> between P evicting Q's frame and Q faulting the page back in?
+
+to access or modify your pse you must acquire a lock (that every pse
+has). 
+Q is going to block on his pse lock if he tries to fault. only when
+P finishes eviction will he release Q's pse lock.
 
 >> B7: Suppose a page fault in process P causes a page to be read from
 >> the file system or swap.  How do you ensure that a second process Q
 >> cannot interfere by e.g. attempting to evict the frame while it is
 >> still being read in?
 
+Q is going to block on frame_lock. basically we can only serve one
+page fault and/or eviction at a time.
+
 >> B8: Explain how you handle access to paged-out pages that occur
 >> during system calls.  Do you use page faults to bring in pages (as
 >> in user programs), or do you have a mechanism for "locking" frames
 >> into physical memory, or do you use some other design?  How do you
 >> gracefully handle attempted accesses to invalid virtual addresses?
+
+pinning. we read/write one page a time after bringing it to memory and
+ensuring no one is going to evict him (by locking his pse).
+
+Prior to reading/writing we make sure all the pages we are potentially
+reading/writing from are mapped. if they aren't we kill the process
+
+****DOES THIS QUALIFY AS GRACEFUL?
 
 ---- RATIONALE ----
 
@@ -111,6 +182,18 @@ FirstName LastName: contribution
 >> where your design falls along this continuum and why you chose to
 >> design it this way.
 
+pse->lock.
+
+filesys lock.
+
+frame_lock.
+
+loading a page into memory is serialized. must acquire a frame lock. ONLY
+when page fault happens to we go serial All other memory accesses are almost
+parallel. sometimes a pse can be acquired by frame_evict.
+
+***should we move palloc higher up into vman_load_page?
+
 			 MEMORY MAPPED FILES
 			 ===================
 
@@ -120,14 +203,26 @@ FirstName LastName: contribution
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+The UNION
+
 ---- ALGORITHMS ----
 
 >> C2: Describe how memory mapped files integrate into your virtual
 >> memory subsystem.  Explain how the page fault and eviction
 >> processes differ between swap pages and other pages.
 
+They take on another enum. ptype->ptype_file. 
+
+we keep track in pse of which type/origin of the memory.
+switch on ptype when loading (vman_load_page_helper) and evicting (frame_evict).
+if its a memory file it goes to its own file rather than to swap slot.
+
 >> C3: Explain how you determine whether a new file mapping overlaps
 >> any existing segment.
+
+we cycle through all pages in the allocated range (start address + file
+length) and ensure that they are unmapped. 
+--> checkout vman_upages_unmapped()
 
 ---- RATIONALE ----
 
@@ -137,6 +232,22 @@ FirstName LastName: contribution
 >> that much of their implementation can be shared.  Explain why your
 >> implementation either does or does not share much of the code for
 >> the two situations.
+
+ptype && ploc.
+Code and data difference worth mentioning.
+
+the difference between mmap and a read segment is that a read segment
+can be discarded when paged out whereas a mmaped file nees to be written.
+
+the difference between mmap and data degment is that a data segment 
+once loaded needs to be written to swap whereas 
+mmaped files go back to their files. we do this by checking the ptype during evict
+and setting the plocation accordingly.
+
+mmaped file is treated like a code segment when read from disk.
+
+installation process different -> design choice. felt is cleaner interface
+
 
 			   SURVEY QUESTIONS
 			   ================
@@ -149,6 +260,8 @@ the quarter.
 
 >> In your opinion, was this assignment, or any one of the three problems
 >> in it, too easy or too hard?  Did it take too long or too little time?
+
+Don't understand the significance of implementing memory mapped files.
 
 >> Did you find that working on a particular part of the assignment gave
 >> you greater insight into some aspect of OS design?
