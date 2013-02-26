@@ -13,6 +13,7 @@
 #include "devices/input.h"
 #include "vm/mmap.h"
 #include "vm/pagesup.h"
+#include "vm/vman.h"
 
 #define FILENAME_MAX 14
 
@@ -168,6 +169,7 @@ valid_range(void *_uaddr_start,void *_uaddr_end,bool check_writable)
 	uint8_t *uaddr = (uint8_t *) _uaddr_start;
 	uint8_t *uaddr_end = (uint8_t *) _uaddr_end;
 	struct thread *t = thread_current();
+
 	while (uaddr <= uaddr_end) {
 		void *upage = pg_round_down(uaddr);
 		if (!page_supplement_is_mapped(&t->pst,upage))
@@ -401,12 +403,11 @@ bool sys_filesize(int *stack, uint32_t *eax)
  /* Read user data from a file. */
 bool sys_read(int *stack, uint32_t *eax)
 {
-  bool result = true;
 	int fd = pop_arg(&stack);
-	char *buffer = (void *) pop_arg(&stack);
+	uint8_t *buffer = (uint8_t *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
 	
-	char *buffer_end = ((char *) buffer) + size;
+	uint8_t *buffer_end = ((uint8_t *) buffer) + size;
 
 	PRINT_SYS_READ_2("buffer: %p, ",buffer);
 	PRINT_SYS_READ_2("buffer_end: %p\n", buffer_end);
@@ -418,41 +419,71 @@ bool sys_read(int *stack, uint32_t *eax)
 		!valid_range(buffer,buffer_end,true))
 	  return false;
 	  
-	unsigned bytes_read = 0;  
+	int cummulative_bytes_read = 0;
 	  
 	/* special case: read from STDIN */
 	if (fd == 0) 
 	{
 	  uint8_t c;	  
-	  while (bytes_read < size)
+	  while (cummulative_bytes_read < (int) size)
 	  {
 	    c = input_getc ();
-	    memcpy(&(buffer[bytes_read]), &c, sizeof(uint8_t));
-	    bytes_read++;
+	    memcpy(&(buffer[cummulative_bytes_read]), &c, sizeof(uint8_t));
+	    cummulative_bytes_read++;
 	  }
 	}
-	else
+	else if (fd == 1)
+	{
+		return false;
+	}
+	else 
 	{
 	  /* check for invalid file or STDOUT */
 	  struct file *file = process_get_file_desc(fd);
 	  PRINT_SYS_READ_2("fd: %d, ",fd);
 	  PRINT_SYS_READ_2("file (after opening): %p\n", file);
-	  if (file == NULL || fd == 1)
+	  if (file == NULL)
 	  {
-	    result = false;
+	    cummulative_bytes_read = -1;
 	  }
 	  else /* valid file found */
 	  {
-	    lock_acquire(&lock_filesys);
-	    bytes_read = (int) file_read (file, (void *)buffer, (off_t) size);
-	    lock_release(&lock_filesys);
+	    uint8_t *cur_buf = buffer;
+	    int bytes_remaining = (int) size;
+	    while (bytes_remaining > 0)
+	    {
+
+	    	int bytes_to_end = PGSIZE - pg_ofs(cur_buf);
+	    	int bytes_to_read = bytes_remaining > bytes_to_end ? bytes_to_end : bytes_remaining; 
+
+
+	    	/* pin page */
+	    	void *upage = pg_round_down(cur_buf);
+	    	vman_pin_page(upage);
+
+	    	lock_acquire(&lock_filesys);
+	    	int bytes_read = (int) file_read (file,cur_buf, (off_t) bytes_to_read);
+	    	lock_release(&lock_filesys);
+	    	
+	    	/* unpin page */
+	    	vman_unpin_page(upage);
+
+	    	cummulative_bytes_read += bytes_read;
+	    	if (bytes_read != bytes_to_read)
+	    		break;
+
+	    	cur_buf += bytes_read;
+	    	bytes_remaining -= bytes_read;
+
+	    }
+
     }
   }
   	
 	/* push syscall result to the user program */
-  memcpy(eax, &bytes_read, sizeof(uint32_t));
+  memcpy(eax, &cummulative_bytes_read, sizeof(uint32_t));
 	
-	return result;		
+	return true;	
 }
 
 /* Write to a file. */
@@ -595,6 +626,7 @@ sys_mmap(int *stack, uint32_t *eax)
 			    PRINT_SYS_MMAP_2("mid = %d\n", mid);
 			  }
 			}
+
 		}
 	}
   

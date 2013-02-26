@@ -64,6 +64,9 @@ extern struct lock lock_filesys; /* a coarse global lock restricting access
                             to the file system */
 extern struct lock lock_frame;
 
+void 
+vman_load_page_helper(struct pagesup_entry *pse);
+
 void vman_init(void)
 {
 	frame_init_table(); 
@@ -145,16 +148,26 @@ vman_map_segment (void *upage, struct file *file, off_t offset, int init_data_by
 	return true;
 }
 
-void
-vman_load_page(void *upage)
+void 
+vman_load_page_helper(struct pagesup_entry *pse)
 {
-	struct thread *t = thread_current();
-  struct pagesup_entry *pse = page_supplement_get_entry(&t->pst, upage); 
+		/*
+		1. validation:
+				- check that pst is installed, and is not loaded (fte == NULL)
+		2. lock frame
+		3. vman should do clok algorithm and get next frame table entry . 
+		4. Check if frame is currently occupied, if so [ HANDLE EVICTION ]
+		5. Assume ALL NEW PAGES. call palloc from User pool.
+		6. install into page directory.
+		7. update "fte" in supplemental page table
+		8. update fte
+		9.release frame lock
 
-	lock_acquire(&lock_frame);
-	lock_acquire(&pse->lock);
+	*/
 
 	ASSERT(pse->ploc != ploc_memory);
+
+	struct thread *t = thread_current();
 
 	void *kpage = frame_alloc();
 
@@ -199,29 +212,52 @@ vman_load_page(void *upage)
 
   /* update page directory */
   bool writable = page_supplement_is_writable(pse);
-  pagedir_set_page(t->pagedir, upage, kpage, writable);
+  pagedir_set_page(t->pagedir, pse->upage, kpage, writable);
 
 	pse->ploc = ploc_memory;
   frame_install(pse, kpage);
+}
+
+void
+vman_load_page(void *upage)
+{
+	struct thread *t = thread_current();
+  struct pagesup_entry *pse = page_supplement_get_entry(&t->pst, upage); 
+
+	lock_acquire(&lock_frame);
+	lock_acquire(&pse->lock);
+
+	vman_load_page_helper(pse);
 
   lock_release(&pse->lock);
   lock_release(&lock_frame);
 
   PRINT_LOAD_PAGE("finished loading page\n");
-	/*
-		1. validation:
-				- check that pst is installed, and is not loaded (fte == NULL)
-		2. lock frame
-		3. vman should do clok algorithm and get next frame table entry . 
-		4. Check if frame is currently occupied, if so [ HANDLE EVICTION ]
-		5. Assume ALL NEW PAGES. call palloc from User pool.
-		6. install into page directory.
-		7. update "fte" in supplemental page table
-		8. update fte
-		9.release frame lock
+}
 
-	*/
+void
+vman_pin_page(void *upage)
+{
 
+	pagesup_table *pst = &(thread_current()->pst);
+	struct pagesup_entry *pse = page_supplement_get_entry(pst,upage);
+
+	lock_acquire(&lock_frame);
+	lock_acquire(&pse->lock);
+
+	if (pse->ploc != ploc_memory)
+		vman_load_page_helper(pse);
+
+
+	lock_release(&lock_frame);
+}
+
+void
+vman_unpin_page(void *upage)
+{
+	pagesup_table *pst = &(thread_current()->pst);
+	struct pagesup_entry *pse = page_supplement_get_entry(pst,upage);
+	lock_release(&(pse->lock));
 }
 
 bool 
