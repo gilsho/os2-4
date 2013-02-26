@@ -464,7 +464,7 @@ bool sys_read(int *stack, uint32_t *eax)
 	    	lock_acquire(&lock_filesys);
 	    	int bytes_read = (int) file_read (file,cur_buf, (off_t) bytes_to_read);
 	    	lock_release(&lock_filesys);
-	    	
+
 	    	/* unpin page */
 	    	vman_unpin_page(upage);
 
@@ -489,7 +489,6 @@ bool sys_read(int *stack, uint32_t *eax)
 /* Write to a file. */
 bool sys_write(int *stack, uint32_t *eax)
 {
-  bool result = true;
 	int fd = pop_arg(&stack);
 	void *buffer = (void *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
@@ -501,32 +500,59 @@ bool sys_write(int *stack, uint32_t *eax)
 		!valid_range(buffer,buffer_end,false))
 	  return false;
 
-	unsigned bytes_written = 0;
+	int cummulative_bytes_written = 0;
 
   /* special case: write to STDOUT */
 	if (fd == 1) {
 		putbuf(buffer,size);
-		bytes_written = size;
+		cummulative_bytes_written = size;
 	}
-	else {
+	else if (fd == 0) {
+		return false;
+	} else {
 	  /* check for invalid file or STDIN */
 	  struct file *file = process_get_file_desc(fd);
-	  if (file == NULL || fd == 0)
+	  if (file == NULL)
 	  {
-	    result = false;
+	    cummulative_bytes_written = -1;
 	  }
 	  else /* valid file found */
 	  {
-		  lock_acquire(&lock_filesys);
-	    bytes_written = (int) file_write (file, buffer, (off_t) size); 
-	    lock_release(&lock_filesys);	
+	  	uint8_t *cur_buf = buffer;
+	    int bytes_remaining = (int) size;
+	    while (bytes_remaining > 0)
+	    {
+
+	  		int bytes_to_end = PGSIZE - pg_ofs(cur_buf);
+	    	int bytes_to_write = bytes_remaining > bytes_to_end ? bytes_to_end : bytes_remaining;
+
+	    	void *upage = pg_round_down(cur_buf);
+
+	    	/* pin page */
+	    	vman_pin_page(upage);
+
+		  	lock_acquire(&lock_filesys);
+	    	int bytes_written = (int) file_write (file, cur_buf, (off_t) bytes_to_write); 
+	    	lock_release(&lock_filesys);	
+
+	    	/* unpin page */
+	    	vman_unpin_page(upage);
+
+	    	cummulative_bytes_written += bytes_written;
+	    	if (bytes_written != bytes_to_write)
+	    		break;
+
+	    	cur_buf += bytes_written;
+	    	bytes_remaining -= bytes_written;
+
+	    }
 	  }
 	}
 	
 	/* push syscall result to the user program */
-  memcpy(eax, &bytes_written, sizeof(uint32_t));
+  memcpy(eax, &cummulative_bytes_written, sizeof(uint32_t));
 	
-	return result;		
+	return true;		
 }
 
 /* Change position in a file. */
