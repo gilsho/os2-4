@@ -74,8 +74,10 @@ enum page_location
 /* an entry in the page supplemental table associated with a virtual address */
 struct pagesup_entry 
 {
-	void *upage; 												/* the virtual address of a page, used to generate hash */
-	void *kpage;												/* the physical address of a page if it is currently in memory */
+	void *upage; 												/* the virtual address of a page, used to 
+																				 generate hash */
+	void *kpage;												/* the physical address of a page if it is
+																				 currently in memory */
 	int valid_bytes;										/* the number of bytes that are physically mapped. 
 																				 values written beyond this  will be discarded if and when written to disk*/
 	enum page_type ptype;								/* the type of the page being mapped */
@@ -265,31 +267,11 @@ While process P was reading in a page from disk, it would be holding the frame t
 >> into physical memory, or do you use some other design?  How do you
 >> gracefully handle attempted accesses to invalid virtual addresses?
 
-Kernel page faults are catastrophic and cause the kernel to crash
-because the kernel attempts to acquire the IDE device lock that it already
-holds. This is because a read or write system call invoked by a user 
-process involves both an external file and a buffer location in user virtual
-memory, so the kernel may page fault while trying to access the
-user buffer after it has acquired the IDE lock, and therefore cannot
-load the buffer memory page.
+Prior to reading/writing the buffer from/to file, we verify that all the pages in the buffer are mapped in memory. If any of the pages are not mapped we fail gracefully by terminating the user process, but the OS continues to run unaffected.
 
 We use a pinning mechanism to avoid kernel page faults that might
 occur during system calls. A page that is pinned is immediately
-loaded into a physical memory frame and can NOT be evicted. This is
-implemented through the use of locks on supplemental page table entries.
-
-Prior to reading/writing the buffer from/to file, we verify that the
-head and tail addresses of the buffer are valid user virtual addresses.
-We then compute the addresses of all user pages (using the read/write size)
-that the buffer spans and verify that they are installed in the 
-supplemental page table. If any of these checks fail, we fail gracefully 
-by terminating the user process, but the OS continues to run unaffected.
-
-We then pin each buffer page individually before reading/writing its
-data, and unpin it immediately after this operation is finished. We feel 
-that page/frame pinning is a simple solution to this problem that does 
-not incur significant overhead because only one page/frame may be pinned
-at a given time for each given process.
+loaded into a physical memory frame and can NOT be evicted. We pin a page by retaining the lock on its supplemental page table entry throughout the procedure. The eviction algorithm is configured to skip over frames for which it cannot acquire the supplemental page table entry lock.
 
 ---- RATIONALE ----
 
@@ -303,30 +285,11 @@ at a given time for each given process.
 Our design has several locks to prevent race conditions while still
 allowing a high degree of parallelism.
 
-Similar to the global filesystem lock that was implemented in project
-2, we use a global lock on the frame list to ensure that there are
+We use a lock on the frame list to ensure that there are
 no race conditions when inspecting or modifying elements or the list
-structure itself. We chose to use a global lock because the frame list 
-itself is a global data structure that is shared among all active threads.
+structure itself. We chose to use a static lock because the frame list itself is a static data structure that is shared among all processes.
 
-However, we use individual locks on the supplemental page table
-entries for all processes. These locks must be acquired before inspecting
-or modifying any entry fields.
-
-Using multiple locks increases the likelihood of introducing
-deadlock conditions. To prevent deadlock, we require that locks are acquired
-in a specific order when multiple locks are needed for an operation.
-
-The loading and eviction functions are the only tasks that need
-to acquire multiple locks. For both of these routines, a process must first 
-acquire the frame list lock before acquiring the supplemental page table
-entry lock. During eviction of a frame, a process may modify the supplemental
-page table entry owned by a different process, and it must acquire the
-lock for that entry only after it has acquired the frame lock.
-
-In all other cases, such as when a process needs to inspect or modify one
-of its supplemental page table entries without modifying the frame list, the
-owning process will block until that lock of that entry is released.
+We chose this design to limit the use of global locks to places where we access shared data structures, which is the frame list. Even though the process of eviction/loading a page a process must access the supplemental page table entries of other processes, in most cases access to a supplemental page table entry is local to the owning process. For example, this occurs a process grows its stack, memory maps a file such as when installing pages. To not have a process block every time it attempts to grow its stack we decide to have separate locks for the frame list and each supplemental page table.
 
 
 			 MEMORY MAPPED FILES
@@ -375,18 +338,23 @@ pagesup.h
 -----------------------------
 enum page_type 					/* indicates the type of user memory page entry */
 {
-  ptype_stack,							/* stack page */
-  ptype_segment,						/* writable segment page */
-  ptype_segment_readonly,		/* read-only segment page */
+  ...
+
   ptype_file								/* mem-mapped file page */
+
+  ...
+
 };
 
 enum page_location			/* indicates the current location of a user page */
 {
-	ploc_none,				/* page data does not exist anywhere (new stack pages) */
+	...
+
 	ploc_memory,			/* page data resides in a physical frame */
 	ploc_file,				/* page data resides in an external file */
-	ploc_swap					/* page data resides in a swap slot */
+
+	...
+
 };
 
 struct file_info			/* used to retrieve page data from file */
@@ -395,44 +363,14 @@ struct file_info			/* used to retrieve page data from file */
 	off_t offset;				/* offset location within the file */
 };
 
-struct swap_info			/* used to retrieve page data from swap */
-{
-	size_t slot_index;	/* swap slot where the page data resides */
-};
-
 union pagesup_info		/* union for storing information about
 											 external page data to be loaded in */
 {										
 	struct file_info f;		/* used to retrieve page data from file */
-	struct swap_info s;		/* used to retrieve page data from swap */
+
+	...
+
 };
-
-struct pagesup_entry 			/* supplemental page table entry */
-{
-	void *upage; 						/* used to generate hash */
-	void *kpage;						/* kernel page virtual address */
-	int valid_bytes;				/* valid bytes on the give page */
-	enum page_type ptype;		/* type of user page */
-	enum page_location ploc;	/* current location of user page data */
-	struct thread *owner;			/* pointer to owning thread, (used for eviction) */
-	struct lock lock;					/* lock needed to modify struct fields */
-	struct hash_elem pagesup_elem;	/* supplemental page table elem */
-	struct list_elem frame_elem;    /* frame list elem */
-	union pagesup_info info;	/* info for loading page data. the union is
-															 cast as a file_info or swap_info depending
-															 on the ptype
-};
-
-Each pagesup_entry contains a union pagesup_info, whose contents can either
-be interpreted as a struct file_info or struct swap_info. For pages that are
-installed for memory-mapped files, the contents of pagesup_info will always 
-be accessed as a struct file_info.
-
-We chose to use a UNION so that our supplemental page table entries could
-be generalized to handle all types of loaded data (file, stack, segment), 
-while still maintaining specificity of file locations versus swap slots 
-when necessary.
-
 
 ---- ALGORITHMS ----
 
@@ -443,51 +381,21 @@ when necessary.
 Our implementation differentiates between several types
 of memory pages using an enum page_type indicator that is stored
 in each of the supplemental page table entries. The page_type field 
-is set by the OS during installation of a page and is inspected during
-the loading and releasing of pages. These inspections are usually triggered
-through page-faults, but occur when unmapping memory-mapped files as well.
+is set by the kernel during installation of a page and is inspected during the loading and releasing of pages.
 
-When a file is mapped to memory by the user process using the 'mmap' system
-call, we use the file-size to compute the number of necessary pages to install
-in virtual memory for that file (after checking the validity of the user 
-memory region). Then we install the appropriate number of pages to map the
-file into the supplemental page table. Each of the installed page contains
-a handle of the file struct containing the backing data, an offset indicating
-where in the file the data for the page is located, and a number of valid_bytes
-that the page contains. valid_bytes will be PGSIZE for all pages except for the
-last, because the file may not contain an exact multiple of PGSIZE bytes.
+When an mmap system call occurs, we mapp the relevant address into the user's virtual address space, similar to data and code segments.
 
-Upon user-access of a mmapped page, the process of retrieving the underlying
-data is nearly identical to that of code, data, or stack. After acquiring a
-frame, the function vman_load_page_helper (in vman.c) detects the page has
-ptype_file and issues a filesystem read to retreive the data.
+Upon user-access of a memory-mapped page, the process of retrieving the underlying data is nearly identical to that of a segment page. The very first access to a mmapped page will trigger a fault that will cause the kernel to load the page into memory. Any successive page faults will trigger a similar reaction. However, as opposed to data segments, we always the underlying file as backing store rather than a swap slot.
 
-If the OS is unable to acquire a frame during frame_alloc(), then eviction
-will occur. If eviction occurs on a frame that corresponds to a memory-mapped
-file's page, the eviction algorithm (frame_evict) will detect that the
-page has ptype_file and will write the data back to the underlying file
-(NOT swap) only if it is dirty. If the page is not dirty, there is no need to 
-write out the data and the containing frame is released for use.
-
-For writable segment pages (ptype_segment), eviction will write them to an
-available swap slot, and for read-only segment pages (ptype_segment_readonly),
-eviction will simply discard the contents since they can be fetched from
-the executable again.
+If eviction occurs on a frame that corresponds to a memory-mapped
+file's page, the eviction algorithm will detect that the
+page belongs to a memory-mapped file and will write the data back to the underlying file if it is dirty. If the page is not dirty, the kernel simply discards the data before yielding the frame.
 
 >> C3: Explain how you determine whether a new file mapping overlaps
 >> any existing segment.
 
-The mmap system call retrieves file descriptor and the user virtual address
-at which to start mapping the file, which must be page aligned. Given
-the file descriptor, we retrieve the file length in bytes and compute the 
-number of pages required to map the entire file. We iterate over all 
-required user virtual addresses corresponding to the necessary pages
-and verify that there does not already exist a mapping in the supplementary
-page table (function vman_upages_unmapped). If a page mapping exists for any 
-of the required pages, we know that the requested file mapping will overlap 
-another segment and thus return an error (-1) to the user. If all of
-the requested virtual pages are unmapped, we install the necessary virtual
-pages into the supplemental page table.
+We retrieve the file length and compute the 
+number of pages required to map the entire file. We then iterate over all required user virtual addresses corresponding to the necessary pages and verify that there does not already exist a mapping in the supplementary page table. If a page mapping exists for any of the required pages, we know that the requested file mapping will overlap another segment and thus return an error (-1) to the user. If all of the requested virtual pages are unmapped, we install the necessary virtual pages into the supplemental page table.
 
 ---- RATIONALE ----
 
@@ -499,32 +407,12 @@ pages into the supplemental page table.
 >> the two situations.
 
 
-All virtual pages, whether segment, stack, or mem-mapped files, are installed
-into the supplemental page table using pagesup_entry structs and loaded lazily
-as needed during page faults. While the semantics of segments and mmapped
-files is similar, our implementation maintains unique interfaces to install 
-segment and file mappings because it provides more readable code. For example,
-emory-mapped files do not have regions of uninitialized data, and the
-read/write permissions are determined when the file itself is opened, not
-by the mapping process. However, segment pages must be explicitly installed
-with this information when the executable header is interpreted. For 
-specifics, see vman_map_file versus vman_map_segment.
+While the semantics of segments and mmapped
+files are similar,
 
-We store two enum fields, ptype and ploc, in each entry to indicate how the 
-OS should handle loads and evictions of each page/frame. The location field
-ploc is primarily used for determining where writable segment data currently
-resides, but all pages that have been loaded to physical frames have
-their location set to ploc_memory to indicate that they are present.
+The functionality for allocating/evicting frames and loading the page data into memory is for the most part identicaly across all types of user pages. Therefore we decided to consolidate as much of the code as we could. When different functionality is needed, the kernel switches on the pages type to handle the minor differences. 
 
-The procedures for allocating/evicting frames and actually loading the page 
-data is shared between all types of user pages. The eviction (frame_evict) and 
-loading (vman_load_page) functions inspect the page type (ptype) field of
-a given supplemental page table entry. For mem-mapped files, the loading
-procedure will read the valid bytes to an active page, and the eviction
-procedure will similarly write the valid bytes of a page back to the 
-file if the page is dirty. Once a mem-mapped page is evicted, its location
-ploc is set to ploc_file to indicate where it resides for later access.
-
+An exception to this rule is the way in which we initialize the supplemental page table entires for each pages type.  our implementation maintains unique interfaces to install segment and file mappings because we felt it would be more readable and less prone to errors.
 
 
 			   SURVEY QUESTIONS
@@ -541,9 +429,7 @@ the quarter.
 
 We felt that the implementation of memory-mapped files adds extra
 work to this project without enriching the underlying OS system. It
-could be omitted, 
-
-Don't understand the significance of implementing memory mapped files.
+could be omitted.
 
 >> Did you find that working on a particular part of the assignment gave
 >> you greater insight into some aspect of OS design?
