@@ -210,12 +210,12 @@ vman_load_page_helper(struct pagesup_entry *pse)
   		break;
   }
 
+	pse->ploc = ploc_memory;
+  frame_install(pse, kpage);
+
   /* update page directory */
   bool writable = page_supplement_is_writable(pse);
   pagedir_set_page(t->pagedir, pse->upage, kpage, writable);
-
-	pse->ploc = ploc_memory;
-  frame_install(pse, kpage);
 }
 
 void
@@ -340,8 +340,31 @@ vman_unmap_file(void *upage, uint32_t file_len)
 void
 vman_free_all_pages(void)
 {
-	pagesup_table *pst = &(thread_current()->pst);
+	struct thread *t = thread_current();
+	pagesup_table *pst = &(t->pst);
+	uint32_t *pd = t->pagedir;
 	lock_acquire(&lock_frame);
-	page_supplement_destroy(pst, &frame_release);
+	hash_apply(pst, &destroy_helper);
+
+	page_supplement_destroy(pst);
+
+	/* Destroy the current process's page directory and switch back
+     to the kernel-only page directory. */
+  
+  if (pd != NULL) 
+    {
+      /* Correct ordering here is crucial.  We must set
+         cur->pagedir to NULL before switching page directories,
+         so that a timer interrupt can't switch back to the
+         process page directory.  We must activate the base page
+         directory before destroying the process's page
+         directory, or our active page directory will be one
+         that's been freed (and cleared). */
+      t->pagedir = NULL;
+      pagedir_activate (NULL);
+      pagedir_destroy (pd);
+    }
+
+
 	lock_release(&lock_frame);
 }

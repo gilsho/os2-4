@@ -344,22 +344,6 @@ process_exit (void)
   /* destroy supplementary PTEs and free any frames */
   vman_free_all_pages();
 
-  /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
-  pd = t->pagedir;
-  if (pd != NULL) 
-    {
-      /* Correct ordering here is crucial.  We must set
-         cur->pagedir to NULL before switching page directories,
-         so that a timer interrupt can't switch back to the
-         process page directory.  We must activate the base page
-         directory before destroying the process's page
-         directory, or our active page directory will be one
-         that's been freed (and cleared). */
-      t->pagedir = NULL;
-      pagedir_activate (NULL);
-      pagedir_destroy (pd);
-    }
   
   /* Close any files opened by this process */
   close_open_files(info);

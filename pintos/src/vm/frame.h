@@ -7,6 +7,7 @@
 #include <list.h>
 #include "vm/pagesup.h"
 
+extern struct list frame_list;
 
 void frame_init_table(void);
 void *frame_alloc(void);

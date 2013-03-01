@@ -20,7 +20,7 @@ bool page_supplement_cmp(const struct hash_elem *a,
                     		void *aux);
 
 unsigned page_supplement_hash(const struct hash_elem *e, void *aux UNUSED);
-void destroy_helper (struct hash_elem *e, void *aux);
+void destroy_helper (struct hash_elem *e, void *aux UNUSED);
 
 
 void 
@@ -140,24 +140,23 @@ page_supplement_hash(const struct hash_elem *e, void *aux UNUSED)
 }
 
 void
-page_supplement_destroy(pagesup_table *pst, pse_destroy_func *func)
+page_supplement_destroy(pagesup_table *pst)
 {
-	pst->aux = func;
-	hash_destroy (pst, &destroy_helper); 
+	hash_destroy (pst, NULL); 
 }
 
 void
-destroy_helper (struct hash_elem *e, void *aux)
+destroy_helper (struct hash_elem *e, void *aux UNUSED)
 {
 	struct pagesup_entry *pse = hash_entry(e, struct pagesup_entry, pagesup_elem);
-	
-	pse_destroy_func *frame_release_handle = (pse_destroy_func *)aux;
-	frame_release_handle(pse);
+	lock_acquire(&pse->lock);
+	frame_release(pse);
 	/*printf("destroying: %p\n", pse->upage);
 	printf("owner: %s\n", pse->owner->name);
 	printf("tid: %d\n", pse->owner->tid);
 	printf("kpage: %p\n", pse->kpage);*/
 	pse->ploc = -1;
+	lock_release(&pse->lock);
 }
 
 

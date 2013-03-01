@@ -24,8 +24,8 @@
 extern struct lock lock_filesys;
 
 struct lock lock_frame;
-static struct list frame_list;
-struct list_elem *clock_hand;
+struct list frame_list;
+static struct list_elem *clock_hand;
 
 void frame_clock_advance(void);
 void frame_swap_out(struct pagesup_entry *pse, void *buff);
@@ -54,16 +54,16 @@ frame_alloc(void)
   		
   		if (lock_try_acquire(&pse->lock))
   		{
-  			PRINT_FRAME_2("type: %d\n", pse->ptype);
+  			/*PRINT_FRAME_2("type: %d\n", pse->ptype);
   			PRINT_FRAME_2("location: %d\n", pse->ploc);
   			PRINT_FRAME_2("upage: %p\n", pse->upage);
-  			/*printf("owner: %s\n", pse->owner->name);
+  			printf("owner: %s\n", pse->owner->name);
   			printf("tid: %d\n", pse->owner->tid);
   			printf("kpage: %p\n", pse->kpage);*/
-  			if (pse->ploc != ploc_memory){
+  			/*if (pse->ploc != ploc_memory){
   				lock_release(&pse->lock);
   				continue;
-  			}
+  			}*/
   			ASSERT(pse->ploc == ploc_memory);
   			uint32_t *pd = pse->owner->pagedir;
   			if (!pagedir_is_accessed(pd, pse->upage) )
@@ -112,12 +112,28 @@ frame_release(struct pagesup_entry *pse)
 {
 	/*lock_acquire(&lock_frame);*/
 
-	PRINT_FRAME_2("frame_release upage: %p\n", pse->upage);
-	PRINT_FRAME_2("frame_release loc: %d\n", pse->ploc);
+	/*PRINT_FRAME_2("frame_release upage: %p\n", pse->upage);
+	PRINT_FRAME_2("frame_release loc: %d\n", pse->ploc);*/
 
 	if (pse->ploc == ploc_memory) {
-		PRINT_FRAME_2("removing from list: %p\n", pse->upage);
+		/*PRINT_FRAME_2("removing from list: %p\n", pse->upage);*/
 		/*PRINT_FRAME_2("frame_release kpage: %p\n", pse->kpage);*/
+
+		struct pagesup_entry *cpse = list_entry(clock_hand,struct pagesup_entry,frame_elem);
+		/*if (clock_hand == list_tail(&frame_list)) {
+			printf("CLOCK_HAND IS NULL\n");
+		} else {
+		printf("clock_hand->upage: %p, t:%d, ploc:%d \t pse->upage: %p, t: %d, ploc:%d\n",
+			cpse->upage, cpse->owner->tid,cpse->ploc,
+			pse->upage,pse->owner->tid,pse->ploc);
+		}*/
+		if (clock_hand == &pse->frame_elem) {
+			/*printf("FOUND FOUND FOUND FOUND FOUND FOUND ALERT ALERT ALERT!\n");
+			ASSERT(clock_hand != list_head(&frame_list));
+			ASSERT(clock_hand != list_tail(&frame_list));*/
+			clock_hand = list_next(clock_hand);	
+		}
+
 		list_remove(&pse->frame_elem);
 
 		/* assume pagedir_destroy will free the physical pages */
@@ -130,18 +146,22 @@ frame_release(struct pagesup_entry *pse)
 		swap_release_slot((size_t) pse->info.s.slot_index);
 	}	
 	/*lock_release(&lock_frame);*/
+
 }
 
 /* caller must have frame lock */
 void
 frame_clock_advance(void)
 {
+
 	ASSERT(lock_held_by_current_thread(&lock_frame));
-	struct list_elem *elem = list_next(clock_hand);
-	if (elem == list_end(&frame_list))
-		clock_hand = list_head(&frame_list);
+	ASSERT(!list_empty(&frame_list));
+	if (clock_hand == list_back(&frame_list) || clock_hand == list_tail(&frame_list))
+		clock_hand = list_front(&frame_list);
 	else
-		clock_hand = elem; 
+		clock_hand = list_next(clock_hand); 
+	ASSERT(clock_hand != list_head(&frame_list));
+	ASSERT(clock_hand != list_tail(&frame_list));
 }
 
 /* Assumes caller has lock for PSE */
@@ -160,6 +180,13 @@ frame_evict(struct pagesup_entry *pse)
 
 	struct list_elem *e = list_remove(&pse->frame_elem);
 	ASSERT( e != NULL );
+
+	if (clock_hand == &pse->frame_elem) {
+		/*printf("FOUND FOUND FOUND FOUND FOUND FOUND ALERT ALERT ALERT!\n");
+		ASSERT(clock_hand != list_head(&frame_list));
+		ASSERT(clock_hand != list_tail(&frame_list));*/
+		clock_hand = list_next(clock_hand);	
+	}
 
 	off_t bytes_written;
 	ASSERT(pse->ploc == ploc_memory);
