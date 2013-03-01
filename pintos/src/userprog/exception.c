@@ -18,15 +18,6 @@
 #define STACK_EXT_LIMIT 32
 
 
-
-#if (DEBUG & DEBUG_PAGE_FAULT)
-#define PRINT_PFAULT(X) printf(X)
-#define PRINT_PFAULT_2(X,Y) printf(X,Y)
-#else
-#define PRINT_PFAULT(X) do {} while(0)
-#define PRINT_PFAULT_2(X,Y) do {} while(0)
-#endif
-
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
@@ -178,36 +169,24 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  PRINT_PFAULT_2("page_fault: not_present: %d, ",not_present);
-  PRINT_PFAULT_2("user: %d, ",user);
-  PRINT_PFAULT_2("addr: %p\n",fault_addr);
-  
-  /* kernel should never trigger a page fault. guess we were wrong... */
-  /* ASSERT( user ); */
-  
   bool success = true;
-  
+
   if (not_present) {
 
     void *esp = f->esp;
 
-    if ( is_stack_legal_access(fault_addr, esp) ) {
-      PRINT_PFAULT("page_fault: legal stack access \n");
+    if ( is_stack_legal_access(fault_addr, esp) )
       success = handle_stack_access(fault_addr); 
-    }
-    else if ( is_mem_mapped(fault_addr) ){
-      PRINT_PFAULT("page_fault:legal mem access \n");
+    
+    else if ( is_mem_mapped(fault_addr) )
       success = handle_mem_access(fault_addr);
-    }
-    else{
-      PRINT_PFAULT("page_fault:bad stuff happened.\n");
-      success = false;
-    }
+    
+    else 
+      success = false; /* invalid user address */
+    
   }
-  else {
-    /* write r/o page error */
-    success = false;
-  }
+  else
+    success = false;  /* write r/o page error */
 
   if (!success)
   {
@@ -227,6 +206,8 @@ page_fault (struct intr_frame *f)
   }
 }
 
+/* determine if stack growth is required based on page fault
+   at FAULT_ADDR, and grow the stack if possible. */
 bool
 handle_stack_access(void *fault_addr)
 {
@@ -235,26 +216,25 @@ handle_stack_access(void *fault_addr)
   /*printf("IN HANDLE: thread name: %s\n", t->name);*/
   
   if ( is_stack_ext_required(fault_addr, t->stack_base) ) {
-  
-    /*printf("stack ext required\n");*/
+
     if ( is_stack_ext_allowed(t->stack_base) ){
-      /*printf("stack ext allowed\n");*/
+      /* allocate a new stack page */
       return vman_grow_stack();
     }
     else /* stack page limit reached */
       return false;   
   }
-  else /* retrieve paged stack page from a swap slot */
+  else /* retrieve paged-out stack page from a swap slot */
   {
-    PRINT_PFAULT_2("stack fault addr: %p\n", fault_addr);
-    PRINT_PFAULT_2("->page bottom: %p\n", pg_round_down(fault_addr));
     vman_load_page(pg_round_down(fault_addr));
   }
 
   return true;
 }
 
-
+/* determine if the fault is at a legal stack access.
+   _FAULT_ADDR must be no more than the fixed limit (32B)
+   below the stack pointer (heuristic) */
 bool
 is_stack_legal_access(void *_fault_addr, void *_esp)
 {
@@ -263,6 +243,8 @@ is_stack_legal_access(void *_fault_addr, void *_esp)
   return (fault_addr >= esp - STACK_EXT_LIMIT);
 }
   
+/* given a valid stack access at _FAULT_ADDR, determine
+   whether stack growth is required */
 bool
 is_stack_ext_required(void *_fault_addr, void *_stack_base)
 {
@@ -271,15 +253,17 @@ is_stack_ext_required(void *_fault_addr, void *_stack_base)
   return fault_addr < stack_base;
 }
 
+/* determine if stack growth is possible. the base of the
+   mapped stack segment must not be lower than MIN_STACK_BASE */
 bool
 is_stack_ext_allowed(void *_stack_base)
 {
-  /*printf("stack base:     %p\n", _stack_base); */
-  /*printf("MIN_STACK_BASE: %p\n", (uint8_t *)MIN_STACK_BASE);*/
   uint8_t *stack_base = (uint8_t *)_stack_base;
   return stack_base >= (uint8_t *)MIN_STACK_BASE;
 }
 
+/* determine if page fault at _FAULT_ADDR corresponds to an
+   install memory-mapped file page */
 bool
 is_mem_mapped(void *_fault_addr)
 {
@@ -287,6 +271,8 @@ is_mem_mapped(void *_fault_addr)
   return !vman_upages_unmapped(upage, 1);
 }
 
+/* initiate the loading of page data that generated the fault
+   at _FAULT_ADDR into physical memory */
 bool
 handle_mem_access(void *_fault_addr)
 {

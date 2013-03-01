@@ -113,6 +113,7 @@ void release_children_locks(struct process_info *info, void* aux UNUSED);
 
 bool process_map_page(void *upage, bool writable);
 bool process_unmap_page(void *upage);
+void unmap_mm_files(struct process_info *info);
 
 
 /* Initializes the process control block.
@@ -308,7 +309,8 @@ close_open_files(struct process_info *info){
 
 /* Unmap any mem-mapped files for the current process */
 void
-unmap_mm_files(struct process_info *info){
+unmap_mm_files(struct process_info *info)
+{
 
   struct hash_iterator i;
 

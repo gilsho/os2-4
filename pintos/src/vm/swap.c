@@ -6,22 +6,16 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 
-#if (DEBUG & DEBUG_SWAP)
-#define PRINT_SWAP(X) {printf("swap: "); printf(X);}
-#define PRINT_SWAP_2(X,Y) {printf("swap: "); printf(X,Y);}
-#else
-#define PRINT_SWAP(X) do {} while(0)
-#define PRINT_SWAP_2(X,Y) do {} while(0)
-#endif
-
+/* define the number of sectors per swap slot (4KB) */
 #define SLOT_SECTOR_COUNT (PGSIZE / BLOCK_SECTOR_SIZE)
 
-struct block *swap_device;
-static struct bitmap *swap_map;      /* Free map, one bit per sector. */
-struct lock lock_swap;
+struct block *swap_device;					 /* swap block device handler */
+static struct bitmap *swap_map;      /* bitmap, one bit per sector. */
+struct lock lock_swap;							 /* swap slot for accessing bitmap */
 
 size_t swap_reserve_slot(void);
 
+/* initialize the swap device bitmap and designate all slots as free */
 void
 swap_init(void)
 {
@@ -30,10 +24,10 @@ swap_init(void)
 	size_t num_slots = (size_t) (block_size (swap_device) / SLOT_SECTOR_COUNT);
 	swap_map = bitmap_create (num_slots);
 	bitmap_set_all (swap_map, false);
-	PRINT_SWAP_2("num slots: %d\n", (int)num_slots);
 }
 
-
+/* returns the index of an available swap slot to the calling process.
+   panics the kernel if no swap slots are available. */
 size_t 
 swap_reserve_slot(void)
 {
@@ -46,6 +40,8 @@ swap_reserve_slot(void)
 	return slot_idx;
 }
 
+/* release the swap slot at SLOT_IDX by clearing the
+	 corresponding bitmap entry */
 void
 swap_release_slot(size_t slot_idx)
 {
@@ -54,11 +50,11 @@ swap_release_slot(size_t slot_idx)
 	lock_release(&lock_swap);
 }
 
+/* reads the page data at swap slot SLOT_IDX into the 
+   supplied buffer at kernel virtual address KPAGE */
 void
 swap_read_slot(size_t slot_idx, void *kpage)
 {
-	PRINT_SWAP_2("reading slot @ index: %d\n", (int)slot_idx);
-	PRINT_SWAP_2("-> to kpage: %p\n", kpage);
 	void *cur_addr = kpage;
 	block_sector_t cur_sector = slot_idx * SLOT_SECTOR_COUNT;
 
@@ -72,6 +68,9 @@ swap_read_slot(size_t slot_idx, void *kpage)
 	swap_release_slot(slot_idx);
 }
 
+/* writes the page data at kernel virtual address KPAGE
+   into the swap device, returning the index of the
+   swap slot used for storage.  */
 size_t
 swap_write_slot(void *kpage)
 {

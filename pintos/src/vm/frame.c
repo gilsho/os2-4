@@ -119,7 +119,7 @@ frame_release(struct pagesup_entry *pse)
 		/*PRINT_FRAME_2("removing from list: %p\n", pse->upage);*/
 		/*PRINT_FRAME_2("frame_release kpage: %p\n", pse->kpage);*/
 
-		struct pagesup_entry *cpse = list_entry(clock_hand,struct pagesup_entry,frame_elem);
+		/*struct pagesup_entry *cpse = list_entry(clock_hand,struct pagesup_entry,frame_elem);*/
 		/*if (clock_hand == list_tail(&frame_list)) {
 			printf("CLOCK_HAND IS NULL\n");
 		} else {
