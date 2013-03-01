@@ -8,9 +8,10 @@
 
 >> Fill in the names and email addresses of your group members.
 
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
+
+Dan Cocuzzo <dcocuzzo@stanford.edu>
+Rory MacQueen <rmacqueen@stanford.edu>
+Gil Shotan <gilsho@stanford.edu>
 
 ---- PRELIMINARIES ----
 
@@ -21,13 +22,13 @@ FirstName LastName <email@domain.example>
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
 
-FirstName LastName: contribution
-FirstName LastName: contribution
-FirstName LastName: contribution
+All team members implemented all functionality of the project together
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
 >> text, lecture notes, and course staff.
+
+None.
 
 			PAGE TABLE MANAGEMENT
 			=====================
@@ -38,28 +39,77 @@ FirstName LastName: contribution
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-page supplemental table
+in thread.h:
+------------
+
+struct thread {
+    pagesup_table pst;                  /* Supplemental page table */
+}
+
+
+in pagesup.h:
+-------------
+
+/* the underlying data structure for the page supplementary table is a hash map */
+typedef struct hash pagesup_table;
+
+/* identifies the type of page mapped to the virtual address */
+enum page_type 
+{
+  ptype_stack,									/* a stack page */
+  ptype_segment,								/* a page mapped to a read/write segment (data) */
+  ptype_segment_readonly,				/* a page mapped to a read only segment page (code) */
+  ptype_file										/* a page mapped to a memory mapped file */
+};
+
+/* identifies the current location of a page */
+enum page_location
+{
+	ploc_none,									/* does not exist yet */
+	ploc_memory,								/* lives in memory */
+	ploc_file,									/* written to a memory mapped file*/
+	ploc_swap										/* swapped out to disk */
+};
+
+/* an entry in the page supplemental table associated with a virtual address */
+struct pagesup_entry 
+{
+	void *upage; 												/* the virtual address of a page, used to generate hash */
+	void *kpage;												/* the physical address of a page if it is currently in memory */
+	int valid_bytes;										/* the number of bytes that are physically mapped. 
+																				 values written beyond this  will be discarded if and when written to disk*/
+	enum page_type ptype;								/* the type of the page being mapped */
+	enum page_location ploc;						/* the current location of the page: memory,disk,file */
+	struct thread *owner;								/* a back-pointer the thread whose page supplementary table the entry is a member of */
+	struct lock lock;										/* a lock used to synchornize access to the page supplementary entry */
+	struct hash_elem pagesup_elem;			/* h hash elem used to embedd this entry into the page supplemental hash table */
+	struct list_elem frame_elem;				/* a list elem used to embedd this entry into a global list of frames. 
+																				 used only if the current entry is located in memory */
+	....
+
+};
+
+
 
 ---- ALGORITHMS ----
 
 >> A2: In a few paragraphs, describe your code for locating the frame,
 >> if any, that contains the data of a given page.
 
-a thread has a page supplemental table, which contains a pointer to the
-kernel address of the frame containing the page, given that the page in
-in memory.
--> upage is the hash key in the page supplemental table
+Given a page, we lookup the entry corresponding to that page in the
+page supplemental table. The page supplemental table is a hash map,
+and the virtual address of the page is used to compute the hash value
+by which the page supplemental table entry is indexed.
+
+The 'ploc' field of the page supplemental entry tells us whether this
+page currently resides in memory. If so, the 'kpage' field is populated
+with the kernel virtual address (physical address) of the frame.
 
 >> A3: How does your code coordinate accessed and dirty bits between
 >> kernel and user virtual addresses that alias a single frame, or
 >> alternatively how do you avoid the issue?
 
-We are avoiding the issue. we only access memory in kernel using 
-the kernel address.
--> we may  need to set dirty+accessed manually in write, ad set
-accessed in sys_read. OFFICE HOURS. need to check if we need to
-do this elsewhere
-
+????????????????????????????????????????????????????????????????????
 
 
 ---- SYNCHRONIZATION ----
@@ -67,18 +117,26 @@ do this elsewhere
 >> A4: When two user processes both need a new frame at the same time,
 >> how are races avoided?
 
-lock_frame is acquired prior to allocating a new frame, and is held 
-throughout the process of eviction (if necessary) and re-mapping the 
-frame to the new process
+When a process P1 page faults and requires a new frame it must obtain a 
+global lock (lock_frame). Any other process that page faults while 
+the page fault handler is handling P1's page fault will block until the
+frame lock is released. Thus, our implementation supports only one
+frame allocation at a time.
 
 ---- RATIONALE ----
 
 >> A5: Why did you choose the data structure(s) that you did for
 >> representing virtual-to-physical mappings?
 
--> page_supplemental table is hash for quick look up
-- frame table (trick with two struct elems in pse) is list 
-for consistent iteration.
+We used a hash map to represent our virtual-to-physical mapping.
+We chose this design for its speed of access and limited use memory. 
+Since page faults must be handled very quickly, locating the information
+associated with that page in the supplemental  page table should be
+a very speedy operation, and hash maps provide this lookup in O(1) time.
+Also, our supplemental page table grows dynamically with every new page
+created to provide O(n) space complexity, where n is the number of pages
+being used by a process. 
+
 
 		       PAGING TO AND FROM DISK
 		       =======================
@@ -89,44 +147,80 @@ for consistent iteration.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-frame table
-swap bitmap.
 
-THE UNION
+in frame.c:
+-----------
+
+struct lock lock_frame;							/* a lock for synchronizing access to the list of frames */
+static struct list frame_list;			/* the list of all frames currently in use */
+struct list_elem *clock_hand;				/* the last frame considered for eviction: the 'hand' of the clock algorithm */
+
+in swap.c:
+----------
+
+struct block *swap_device;					/* the starting disk block of the swap partition */
+static struct bitmap *swap_map;     /* a bitmap representing the used slots on disk */
+struct lock lock_swap;							/* a lock for synchronizing access to the swap bitmap */
+
+in pagesup.h:
+-------------
+
+
+/* contains the information for locating a page that lives in disk */
+struct file_info
+{
+	struct file *file;
+	off_t offset;
+};
+
+/* contains the information for locating a pages that has been written to a swap slot */
+struct swap_info
+{
+	size_t slot_index;
+};
+
+/* contains the information for locating a page that does not live in memory. 
+   such pages are either in a swap slot or in a file on disk */
+union pagesup_info 
+{
+	struct file_info f;
+	struct swap_info s;	
+};
+
+struct pagesup_entry 
+{
+	...
+
+	union pagesup_info info;						/* information for retrieving a page if it is not in memory */
+
+	...
+
+}
+
 
 ---- ALGORITHMS ----
 
 >> B2: When a frame is required but none is free, some frame must be
 >> evicted.  Describe your code for choosing a frame to evict.
 
-clock_algorithm. jump over pin pages, also skip pages that are currently
-being updates to avoid blocking in the middle of eviction (lock_try_acquire).
-and race conditions (invariant: always acquire frame lock before pse locks).
-skip accessed bits and clear them. 
---> look at frame_alloc
+We implement the clock algorithm to decide which page to evict. Frames are stored in a list of page supplementary table entries. We maintain a global list_elem pointer, called the clock hand. The clock hand steps down the list. When it gets to the end, it moves to the head of the list and starts again. At each element, the clock hand checks the page directory to see if this page has been accessed. If so, then we clear the bit and continue. If not, then we select this frame to evict. This algorithm is an approximation of Least Recently Used. 
 
+Because the clock must first acquire the lock for the page supplementary table before checking if it can be evicted, pages which have been 'pinned' or are having their page table entires updated are not eligible for eviction, since their locks are already acquire by another process. 
 
 >> B3: When a process P obtains a frame that was previously used by a
 >> process Q, how do you adjust the page table (and any other data
 >> structures) to reflect that frame Q no longer has it?
 
-we also take it off the frame list (the struct).
-pse->ploc = ploc_swap OR ploc_file.
---> don't forget to put the page_location enum in B1.
---> look at frame_evict
+We first call pagedir_clear_page to clear the page directory in hardware. This ensures that all future accesses to this page will page fault. We also remove the page supplementary table entry from the frame list, which means it is not in the frame table. Finally, we set the "location" field on the page supplement table entry struct to be either 'swap' or 'file' depending on where it was written to. The key is that its location is no longer set to be 'memory'.
 
 
 >> B4: Explain your heuristic for deciding whether a page fault for an
 >> invalid virtual address should cause the stack to be extended into
 >> the page that faulted.
 
-we keep track of stack_base (don't forget to include this in B1 or somewhere).
-and if it's a legal access (up to 32 bytes below esp), then we allocate a new
-page. also we check that we didn't exceed the max stack size (MIN_STACK_BASE).
--->exception.c: is_valid_stack_access
--->exception.c: handle_stack_access.
+First we check to see if the stack address was legal - that is, we check that the address trying to be accessed is no more that 32 bytes below the current esp.
 
-check legal access->check extension required->check is extension allowed.
+Assuming it is a legal access, we check to see if a stack extension is require. Each thread maintains a pointer to its current "stack base", which is a pointer the bottom of the memory that has been allocated for it. To check to see if we need an extension, we simply compare the faulting address to the current stack_base: if it is lower, we need to extend the stack. However, here we need another check to make sure that we are not extending beyond MIN_STACK_BASE, which represents the lowest possible address that the stack can be extended to. If we go beyond this address, we will be trespassing on the code and data segments!
 
 ---- SYNCHRONIZATION ----
 
@@ -135,9 +229,9 @@ check legal access->check extension required->check is extension allowed.
 >> textbook for an explanation of the necessary conditions for
 >> deadlock.)
 
-we always matain a hierarachy in locks. ALWAYS get the frame lock
-before acquiring pse locks. skip over acquired pse locks. breaks
-condition 4 of deadlocks: circularity.
+A thread must acquire the frame table lock before making any changes to the frame table. This means that the lock is acquire when a new frame is needed, and is held until a frame has been evicted and another one has been put in its place. Furthermore, when checking a page supplementary table entry to see if it's frame can be evicted, one must hold the lock for that entry. 
+
+To avoid deadlock, we maintain a hierarchy of lock acquisition. The frame lock must always be acquire before the lock for another page supplementary table entry is acquired. In this way we ensure that we don't have a circularity on lock acquisitions, which breaks the 4th necessary condition for deadlock.
 
 IDE?
 
@@ -146,18 +240,14 @@ IDE?
 >> the page during the eviction process?  How do you avoid a race
 >> between P evicting Q's frame and Q faulting the page back in?
 
-to access or modify your pse you must acquire a lock (that every pse
-has). 
-Q is going to block on his pse lock if he tries to fault. only when
-P finishes eviction will he release Q's pse lock.
+While a frame is being evicted, the lock for that frame's associated page supplementary table entry is being held by the process P. The first thing that process P will do is clear the page directory for that page. This ensures that  process Q will get a page fault if it tries to access that page. Upon getting a page fault, process Q will try to acquire the lock for the page's supplementary table entry. Here it will block until process P has completely finished the eviction process. Hence, Q cannot fault the page back in until P taken it off the frame table and written it to disk (if necessary).
 
 >> B7: Suppose a page fault in process P causes a page to be read from
 >> the file system or swap.  How do you ensure that a second process Q
 >> cannot interfere by e.g. attempting to evict the frame while it is
 >> still being read in?
 
-Q is going to block on frame_lock. basically we can only serve one
-page fault and/or eviction at a time.
+While process P was reading in a page from disk, it would be holding the frame table lock. No other process can begin the eviction process until it acquires the frame lock - hence, process Q must wait unti process P has successfully read in its page from disk before process Q can evict that page. The basic idea is that our system handles one page fault or eviction at a time. This ensures that we don't encounter race conditions between multiple evictions and page faults.
 
 >> B8: Explain how you handle access to paged-out pages that occur
 >> during system calls.  Do you use page faults to bring in pages (as
