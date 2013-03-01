@@ -153,7 +153,11 @@ destroy_helper (struct hash_elem *e, void *aux)
 	
 	pse_destroy_func *frame_release_handle = (pse_destroy_func *)aux;
 	frame_release_handle(pse);
-	pse->ploc = ploc_none;
+	/*printf("destroying: %p\n", pse->upage);
+	printf("owner: %s\n", pse->owner->name);
+	printf("tid: %d\n", pse->owner->tid);
+	printf("kpage: %p\n", pse->kpage);*/
+	pse->ploc = -1;
 }
 
 

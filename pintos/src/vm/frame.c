@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
-/*
+
 #if (DEBUG & DEBUG_FRAME)
 #define PRINT_FRAME(X) {printf("frame_list: "); printf(X);}
 #define PRINT_FRAME_2(X,Y) {printf("frame_list: "); printf(X,Y);}
@@ -16,11 +16,11 @@
 #define PRINT_FRAME(X) do {} while(0)
 #define PRINT_FRAME_2(X,Y) do {} while(0)
 #endif
-*/
 
+/*
 #define PRINT_FRAME(X) do {} while(0)
 #define PRINT_FRAME_2(X,Y) do {} while(0)
-
+*/
 extern struct lock lock_filesys;
 
 struct lock lock_frame;
@@ -54,12 +54,24 @@ frame_alloc(void)
   		
   		if (lock_try_acquire(&pse->lock))
   		{
+  			PRINT_FRAME_2("type: %d\n", pse->ptype);
+  			PRINT_FRAME_2("location: %d\n", pse->ploc);
+  			PRINT_FRAME_2("upage: %p\n", pse->upage);
+  			/*printf("owner: %s\n", pse->owner->name);
+  			printf("tid: %d\n", pse->owner->tid);
+  			printf("kpage: %p\n", pse->kpage);*/
+  			if (pse->ploc != ploc_memory){
+  				lock_release(&pse->lock);
+  				continue;
+  			}
+  			ASSERT(pse->ploc == ploc_memory);
   			uint32_t *pd = pse->owner->pagedir;
   			if (!pagedir_is_accessed(pd, pse->upage) )
   			{
-  				PRINT_FRAME("found pse to evict\n");
+
+  				/*PRINT_FRAME("found pse to evict\n");
   				PRINT_FRAME_2("upage: %p\n", pse->upage);
-  				PRINT_FRAME_2("kpage: %p\n", pse->kpage);
+  				PRINT_FRAME_2("kpage: %p\n", pse->kpage);*/
   				kpage = pse->kpage;
   				frame_evict(pse);
   				lock_release(&pse->lock);
@@ -88,7 +100,7 @@ frame_alloc(void)
 void
 frame_install(struct pagesup_entry *pse, void *kpage)
 {
-	PRINT_FRAME_2("installing PSE @ kpage: %p\n", kpage);
+	/*PRINT_FRAME_2("installing PSE @ kpage: %p\n", kpage);*/
 	pse->kpage = kpage;
 	/*lock_acquire(&lock_frame);*/
 	list_push_back(&frame_list,&pse->frame_elem);
@@ -101,17 +113,20 @@ frame_release(struct pagesup_entry *pse)
 	/*lock_acquire(&lock_frame);*/
 
 	PRINT_FRAME_2("frame_release upage: %p\n", pse->upage);
+	PRINT_FRAME_2("frame_release loc: %d\n", pse->ploc);
 
 	if (pse->ploc == ploc_memory) {
-		PRINT_FRAME_2("frame_release kpage: %p\n", pse->kpage);
+		PRINT_FRAME_2("removing from list: %p\n", pse->upage);
+		/*PRINT_FRAME_2("frame_release kpage: %p\n", pse->kpage);*/
 		list_remove(&pse->frame_elem);
+
 		/* assume pagedir_destroy will free the physical pages */
 		/*palloc_free_page (pse->kpage);*/
 		pse->kpage = NULL;
 	}
 	else if (pse->ploc == ploc_swap)
 	{
-		PRINT_FRAME_2("frame_release swap slot: %p\n", pse->info.s.slot_index);
+		/*PRINT_FRAME_2("frame_release swap slot: %d\n", pse->info.s.slot_index);*/
 		swap_release_slot((size_t) pse->info.s.slot_index);
 	}	
 	/*lock_release(&lock_frame);*/
@@ -185,7 +200,7 @@ void
 frame_swap_out(struct pagesup_entry *pse, void *buff)
 {
 	pse->info.s.slot_index = swap_write_slot(buff);
-	PRINT_FRAME("writing to swap file\n");
+	/*PRINT_FRAME("writing to swap file\n");
 	PRINT_FRAME_2("slot: %d\n", (int)pse->info.s.slot_index);
-	PRINT_FRAME_2("upage: %p\n", pse->upage);
+	PRINT_FRAME_2("upage: %p\n", pse->upage);*/
 }
