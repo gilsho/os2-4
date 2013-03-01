@@ -154,7 +154,7 @@ process_execute (const char *args)
     return TID_ERROR;
   strlcpy (args_copy, args, PGSIZE);
 
-/* Extract executable name from argument string to set as thread name */
+  /* Extract executable name from argument string to set as thread name */
   int len = strnlen(args_copy, PGSIZE)+1;
   char *tmp = malloc(len);
   strlcpy (tmp, args_copy, len);
@@ -312,6 +312,7 @@ unmap_mm_files(struct process_info *info)
   struct hash_elem *e;
   struct hash_elem *ne;
 
+  /* iterate through the hash mmap table and remove each file */
   for (e = hash_next(&i); e != NULL;)
   {    
     struct mmap_entry *mme = hash_entry (hash_cur (&i), struct mmap_entry, elem);
@@ -338,7 +339,6 @@ process_exit (void)
 
   /* destroy supplementary PTEs and free any frames */
   vman_free_all_pages();
-
   
   /* Close any files opened by this process */
   close_open_files(info);
@@ -503,6 +503,7 @@ push_stack_char(void **stack_, char c)
 
 #define MAX_PADDING 4
 
+/* parse the command line argument string from a user program */
 bool 
 parse_args(const char *args, void **esp, char **file_name)
 {
@@ -535,7 +536,6 @@ parse_args(const char *args, void **esp, char **file_name)
   }
 
   /* check that setting up the stack will not exceed page boundary */
-
   int *page_bottom =  (int *)pg_round_down (esp);
   if ((int *)esp - (argc + 4) < page_bottom) 
       return false;
@@ -867,10 +867,10 @@ initialize_process_info(struct process_info **child_info_ptr)
   child_info->has_been_waited = false;
   
   lock_init(&(child_info->lock));
-  cond_init(&(child_info->cond));
-  list_init(&(child_info->children));
-  list_init(&(child_info->fd_list));
-  mmap_init(&(child_info->mmt));
+  cond_init(&(child_info->cond)); 
+  list_init(&(child_info->children));   /* child processes list */
+  list_init(&(child_info->fd_list));    /* file descriptor list */
+  mmap_init(&(child_info->mmt));        /* mem-mapped files hash table */
 
   child_info->next_fd = FILE_DESCRIPTOR_START;
   child_info->next_mid = 0;

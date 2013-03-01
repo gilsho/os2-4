@@ -18,21 +18,6 @@
 
 #define FILENAME_MAX 14
 
-#if (DEBUG & DEBUG_SYS_CALL)
-#define PRINT_SYS_READ_2(X,Y) {printf("sys_read: "); printf(X,Y);}
-#define PRINT_SYS_MMAP_2(X,Y) {printf("sys_mmap: "); printf(X,Y);}
-#define PRINT_SYS_MMAP(X) printf(X)
-#define PRINT_VALID(X) printf(X)
-#define PRINT_VALID_2(X,Y) {printf("valid: "); printf(X,Y);}
-#else
-#define PRINT_SYS_READ_2(X,Y) do {} while(0)
-#define PRINT_SYS_MMAP(X) do {} while(0)
-#define PRINT_SYS_MMAP_2(X,Y) do {} while(0)
-#define PRINT_VALID(X) do {} while(0)
-#define PRINT_VALID_2(X,Y) do {} while(0)
-#endif
-
-
 extern struct lock lock_filesys;
 
 void syscall_init (void);
@@ -146,9 +131,9 @@ syscall_handler (struct intr_frame *f)
 }
 
 
-/* This function pops a word from the stack and returns it. 
-	We check if the stack is a valid user address before popping
-	next argument */
+/* pops a word from the stack and returns it. 
+	 checks if the stack is a valid user address before popping
+	 next argument */
 int 
 pop_arg(int **ustack)
 {
@@ -164,6 +149,9 @@ pop_arg(int **ustack)
 	return arg;
 }
 
+/* returns true if all user virtual pages that span the
+   range _UADDR_START to _UADDR_END have been mapped
+   into the supplemental page table, false otherwise */
 bool
 valid_range(void *_uaddr_start,void *_uaddr_end,bool check_writable)
 {
@@ -240,7 +228,9 @@ valid_str(const char *s, unsigned max_len)
   return false;
 }
 
-/* assumes _s is page aligned */
+/* verifies that all pages, starting from UPAGE
+	 to UPAGE + LEN, are valid user virtual addresses
+   assumes _s is page aligned */
 bool 
 is_user_buffer(void *upage, unsigned len)
 {	
@@ -250,7 +240,6 @@ is_user_buffer(void *upage, unsigned len)
   int i;
   for (i=0; i<npages; i++) {
   	if (!is_user_vaddr(s)) {
-  		PRINT_VALID_2("invalid buffer: %p\n", s);
   		return false;
   	}
     s += PGSIZE;
@@ -410,11 +399,6 @@ bool sys_read(int *stack, uint32_t *eax)
 	
 	uint8_t *buffer_end = ((uint8_t *) buffer) + size;
 
-	PRINT_SYS_READ_2("buffer: %p, ",buffer);
-	PRINT_SYS_READ_2("buffer_end: %p\n", buffer_end);
-	PRINT_SYS_READ_2("valid_user_addr(buffer): %d, ", valid_user_addr(buffer));
-	PRINT_SYS_READ_2("valid_user_addr(buffer_end): %d\n",valid_user_addr(buffer_end));
-
 	if (!valid_user_addr(buffer) ||
 		!valid_user_addr(buffer_end) ||
 		!valid_range(buffer,buffer_end,true))
@@ -441,14 +425,13 @@ bool sys_read(int *stack, uint32_t *eax)
 	{
 	  /* check for invalid file or STDOUT */
 	  struct file *file = process_get_file_desc(fd);
-	  PRINT_SYS_READ_2("fd: %d, ",fd);
-	  PRINT_SYS_READ_2("file (after opening): %p\n", file);
 	  if (file == NULL)
 	  {
 	    cummulative_bytes_read = -1;
 	  }
 	  else /* valid file found */
 	  {
+	  	/* read the data from file, one page at a time */
 	    uint8_t *cur_buf = buffer;
 	    int bytes_remaining = (int) size;
 	    while (bytes_remaining > 0)
@@ -458,7 +441,7 @@ bool sys_read(int *stack, uint32_t *eax)
 	    	int bytes_to_read = bytes_remaining > bytes_to_end ? bytes_to_end : bytes_remaining; 
 
 
-	    	/* pin page */
+	    	/* pin page to prevent eviction of buffer page */
 	    	void *upage = pg_round_down(cur_buf);
 	    	vman_pin_page(upage);
 
@@ -466,7 +449,7 @@ bool sys_read(int *stack, uint32_t *eax)
 	    	int bytes_read = (int) file_read (file,cur_buf, (off_t) bytes_to_read);
 	    	lock_release(&lock_filesys);
 
-	    	/* unpin page */
+	    	/* unpin page, making it eligible for eviction */
 	    	vman_unpin_page(upage);
 
 	    	cummulative_bytes_read += bytes_read;
@@ -519,6 +502,7 @@ bool sys_write(int *stack, uint32_t *eax)
 	  }
 	  else /* valid file found */
 	  {
+	  	/* write the data from file, one page at a time */
 	  	uint8_t *cur_buf = buffer;
 	    int bytes_remaining = (int) size;
 	    while (bytes_remaining > 0)
@@ -529,14 +513,14 @@ bool sys_write(int *stack, uint32_t *eax)
 
 	    	void *upage = pg_round_down(cur_buf);
 
-	    	/* pin page */
+	    	/* pin page to prevent eviction of buffer page */
 	    	vman_pin_page(upage);
 
 		  	lock_acquire(&lock_filesys);
 	    	int bytes_written = (int) file_write (file, cur_buf, (off_t) bytes_to_write); 
 	    	lock_release(&lock_filesys);	
 
-	    	/* unpin page */
+	    	/* unpin page, making it eligible for eviction */
 	    	vman_unpin_page(upage);
 
 	    	cummulative_bytes_written += bytes_written;
@@ -614,7 +598,9 @@ bool sys_close(int *stack)
 	return true;	
 }
 
-
+/* mmap a file to a user virtual address
+   for array-like access. returns false
+   if mapping fails, true otherwise */
 bool
 sys_mmap(int *stack, uint32_t *eax)
 {
@@ -622,9 +608,6 @@ sys_mmap(int *stack, uint32_t *eax)
   char *addr = (char *)pop_arg(&stack);
 
   mapid_t mid = -1;
-
-  PRINT_SYS_MMAP_2("fd: %d,",fd);
-  PRINT_SYS_MMAP_2("addr: %p\n",addr);
 
   /* addr must not be 0 (reserved) and must be page-aligned 
   	 and the user vaddr range is valid */
@@ -635,23 +618,17 @@ sys_mmap(int *stack, uint32_t *eax)
   	{
 		  struct file *file = file_reopen (old_file);
 
-		  PRINT_SYS_MMAP_2("file: %p,",file);
-
 		  if (file != NULL)
 		  {
+		  	/* obtain the file length to compute the number of pages needed */
 			  uint32_t file_len;
 				lock_acquire(&lock_filesys);
 				file_len = (uint32_t) file_length (file);
 				lock_release(&lock_filesys);
-				PRINT_SYS_MMAP_2("file_len: %d\n",file_len);
 
 				/* verify that file_len is nonzero and memory range is valid user space */
 				if ( file_len > 0 && is_user_buffer(addr, file_len))
-				{	
-					PRINT_SYS_MMAP("obtaining mid in sys_mmap\n");
-			    mid = process_map_file(addr, file, file_len);
-			    PRINT_SYS_MMAP_2("mid = %d\n", mid);
-			  }
+			    mid = process_map_file(addr, file, file_len); /* map the file */
 			}
 
 		}
@@ -663,10 +640,11 @@ sys_mmap(int *stack, uint32_t *eax)
   return true;
 }
 
+/* unmap a file from mem-mapped user virtual address space */
 bool
 sys_munmap(int *stack)
 {
   mapid_t mid = (mapid_t)pop_arg(&stack);
 
-  return process_unmap_file(mid);
+  return process_unmap_file(mid); /* unmap the file */
 }

@@ -216,6 +216,7 @@ vman_load_page_helper(struct pagesup_entry *pse)
   /* update page directory */
   bool writable = page_supplement_is_writable(pse);
   pagedir_set_page(t->pagedir, pse->upage, kpage, writable);
+  pagedir_set_accessed (t->pagedir, pse->upage, true);
 }
 
 void
