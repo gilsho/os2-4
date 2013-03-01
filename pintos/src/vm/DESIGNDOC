@@ -82,11 +82,14 @@ struct pagesup_entry
 																				 values written beyond this  will be discarded if and when written to disk*/
 	enum page_type ptype;								/* the type of the page being mapped */
 	enum page_location ploc;						/* the current location of the page: memory,disk,file */
-	struct thread *owner;								/* a back-pointer the thread whose page supplementary table the entry is a member of */
-	struct lock lock;										/* a lock used to synchornize access to the page supplementary entry */
-	struct hash_elem pagesup_elem;			/* h hash elem used to embedd this entry into the page supplemental hash table */
-	struct list_elem frame_elem;				/* a list elem used to embedd this entry into a list of frames. 
-																				 used only if the current entry is located in memory */
+	struct thread *owner;								/* a back-pointer the thread whose page 
+																				 supplementary table the entry is a member of */
+	struct lock lock;										/* a lock used to synchornize access to the 
+																				 page supplementary entry */
+	struct hash_elem pagesup_elem;			/* a hash elem used to embedd this entry into 
+																				 the page supplemental hash table */
+	struct list_elem frame_elem;				/* a list elem used to embedd this entry into 
+																				 a list of frames. used only if the current entry is located in memory */
 	....
 
 };
@@ -121,7 +124,8 @@ directory.
 >> A4: When two user processes both need a new frame at the same time,
 >> how are races avoided?
 
-When a process P1 page faults and requires a new frame it must obtain the frame lock (lock_frame). Any other process that page faults while 
+When a process P1 page faults and requires a new frame it must obtain the 
+frame lock (lock_frame). Any other process that page faults while 
 the handler is handling P1's page fault will block. The frame lock
 will be released only when the handler finishes allocating the frame.
 Thus, our implementation supports only one frame allocation at a time.
@@ -217,24 +221,46 @@ struct pagesup_entry
 >> B2: When a frame is required but none is free, some frame must be
 >> evicted.  Describe your code for choosing a frame to evict.
 
-We implement the clock algorithm to decide which page to evict. Frames are stored in a list of supplementary page table entries. We maintain a static list_elem pointer, called the clock hand. The clock hand steps down the list. When it gets to the end, it moves to the head of the list and starts again. At each element, the clock hand checks the page directory to see if this page has been accessed. If so, we clear the bit and continue. If not, we evict this frame. This algorithm is an approximation of Least Recently Used. 
+We implement the clock algorithm to decide which page to evict. Frames are stored in
+a list of supplementary page table entries. We maintain a static list_elem pointer,
+called the clock hand. The clock hand steps down the list. When it gets to the end,
+it moves to the head of the list and starts again. At each element, the clock hand
+checks the page directory to see if this page has been accessed. If so, we clear the
+bit and continue. If not, we evict this frame. This algorithm is an approximation of
+Least Recently Used. 
 
-Because the clock must first acquire the lock for a supplementary page table entry before checking if it can be evicted, pages which have been 'pinned' or are having their page table entries updated are not eligible for eviction, since their locks are already acquired by another process. 
+Because the clock must first acquire the lock for a supplementary page table entry 
+before checking if it can be evicted, pages which have been 'pinned' or are having 
+their page table entries updated are not eligible for eviction, since their locks 
+are already acquired by another process. 
 
 >> B3: When a process P obtains a frame that was previously used by a
 >> process Q, how do you adjust the page table (and any other data
 >> structures) to reflect that frame Q no longer has it?
 
-We first call pagedir_clear_page to clear the page directory in hardware. This ensures that all future accesses to this page will page fault. We also remove the page supplementary table entry from the frame list, which means it is not in the frame table. Finally, we set the "location" field on the page supplement table entry struct to be either 'swap' or 'file' depending on where it was written to. The key is that its location is no longer set to be 'memory'.
+We first call pagedir_clear_page to clear the page directory in hardware. This 
+ensures that all future accesses to this page will page fault. We also remove the 
+page supplementary table entry from the frame list, which means it is not in the 
+frame table. Finally, we set the "location" field on the page supplement table entry 
+struct to be either 'swap' or 'file' depending on where it was written to. The key 
+is that its location is no longer set to be 'memory'.
 
 
 >> B4: Explain your heuristic for deciding whether a page fault for an
 >> invalid virtual address should cause the stack to be extended into
 >> the page that faulted.
 
-First we check to see if the stack address was legal - that is, we check that the address trying to be accessed is no more that 32 bytes below the current esp.
+First we check to see if the stack address was legal - that is, we check that the 
+address trying to be accessed is no more that 32 bytes below the current esp.
 
-Assuming it is a legal access, we check to see if a stack extension is required. Each thread maintains a pointer to its current "stack base", which is a pointer the bottom of the memory that has been allocated for it. To check to see if we need an extension, we simply compare the faulting address to the current stack_base: if it is lower, we need to extend the stack. However, here we need another check to make sure that we are not extending beyond MIN_STACK_BASE, which represents the lowest possible address that the stack can be extended to. If we go beyond this address, we will exceed the allotted stack space.
+Assuming it is a legal access, we check to see if a stack extension is required. 
+Each thread maintains a pointer to its current "stack base", which is a pointer the 
+bottom of the memory that has been allocated for it. To check to see if we need an 
+extension, we simply compare the faulting address to the current stack_base: if it 
+is lower, we need to extend the stack. However, here we need another check to make 
+sure that we are not extending beyond MIN_STACK_BASE, which represents the lowest 
+possible address that the stack can be extended to. If we go beyond this address, we 
+will exceed the allotted stack space.
 
 ---- SYNCHRONIZATION ----
 
@@ -243,23 +269,41 @@ Assuming it is a legal access, we check to see if a stack extension is required.
 >> textbook for an explanation of the necessary conditions for
 >> deadlock.)
 
-A thread must acquire the frame table lock before making any changes to the frame table. This means that the lock is acquired when a new frame is needed, and is held until a frame has been allocated or evicted. Furthermore, when checking a supplementary page table entry to see if it's frame can be evicted, one must hold the lock for that entry. 
+A thread must acquire the frame table lock before making any changes to the frame 
+table. This means that the lock is acquired when a new frame is needed, and is held 
+until a frame has been allocated or evicted. Furthermore, when checking a 
+supplementary page table entry to see if it's frame can be evicted, one must hold 
+the lock for that entry. 
 
-To avoid deadlock, we maintain a hierarchy of lock acquisition. The frame lock must always be acquired before the locks for multiple page supplementary table entries are acquired. In this way we ensure that we don't have a circularity on lock acquisitions, which breaks the 4th necessary condition for deadlock.
+To avoid deadlock, we maintain a hierarchy of lock acquisition. The frame lock must 
+always be acquired before the locks for multiple page supplementary table entries 
+are acquired. In this way we ensure that we don't have a circularity on lock 
+acquisitions, which breaks the 4th necessary condition for deadlock.
 
 >> B6: A page fault in process P can cause another process Q's frame
 >> to be evicted.  How do you ensure that Q cannot access or modify
 >> the page during the eviction process?  How do you avoid a race
 >> between P evicting Q's frame and Q faulting the page back in?
 
-While a frame is being evicted, the frame lock is being held by the process P. The first thing that process P will do is clear the page directory for that page. This ensures that  process Q will get a page fault if it tries to access that page. Upon getting a page fault, process Q will try to acquire the frame lock to load its faulted page back into memory. Here it will block until process P has completely finished the eviction process. Hence, Q cannot fault the page back in until P has taken it off the frame table and written it to disk (if necessary).
+While a frame is being evicted, the frame lock is being held by the process P. The 
+first thing that process P will do is clear the page directory for that page. This 
+ensures that  process Q will get a page fault if it tries to access that page. Upon 
+getting a page fault, process Q will try to acquire the frame lock to load its 
+faulted page back into memory. Here it will block until process P has completely 
+finished the eviction process. Hence, Q cannot fault the page back in until P has 
+taken it off the frame table and written it to disk (if necessary).
 
 >> B7: Suppose a page fault in process P causes a page to be read from
 >> the file system or swap.  How do you ensure that a second process Q
 >> cannot interfere by e.g. attempting to evict the frame while it is
 >> still being read in?
 
-While process P was reading in a page from disk, it would be holding the frame table lock. No other process can begin the eviction process until it acquires the frame lock - hence, process Q must wait unti process P has successfully read in its page from disk before process Q can evict that page. The basic idea is that our system handles one page fault or eviction at a time. This ensures that we don't encounter race conditions between multiple evictions and page faults.
+While process P was reading in a page from disk, it would be holding the frame table 
+lock. No other process can begin the eviction process until it acquires the frame 
+lock - hence, process Q must wait unti process P has successfully read in its page 
+from disk before process Q can evict that page. The basic idea is that our system 
+handles one page fault or eviction at a time. This ensures that we don't encounter 
+race conditions between multiple evictions and page faults.
 
 >> B8: Explain how you handle access to paged-out pages that occur
 >> during system calls.  Do you use page faults to bring in pages (as
@@ -267,11 +311,16 @@ While process P was reading in a page from disk, it would be holding the frame t
 >> into physical memory, or do you use some other design?  How do you
 >> gracefully handle attempted accesses to invalid virtual addresses?
 
-Prior to reading/writing the buffer from/to file, we verify that all the pages in the buffer are mapped in memory. If any of the pages are not mapped we fail gracefully by terminating the user process, but the OS continues to run unaffected.
+Prior to reading/writing the buffer from/to file, we verify that all the pages in 
+the buffer are mapped in memory. If any of the pages are not mapped we fail 
+gracefully by terminating the user process, but the OS continues to run unaffected.
 
 We use a pinning mechanism to avoid kernel page faults that might
 occur during system calls. A page that is pinned is immediately
-loaded into a physical memory frame and can NOT be evicted. We pin a page by retaining the lock on its supplemental page table entry throughout the procedure. The eviction algorithm is configured to skip over frames for which it cannot acquire the supplemental page table entry lock.
+loaded into a physical memory frame and can NOT be evicted. We pin a page by 
+retaining the lock on its supplemental page table entry throughout the procedure. 
+The eviction algorithm is configured to skip over frames for which it cannot acquire 
+the supplemental page table entry lock.
 
 ---- RATIONALE ----
 
@@ -287,9 +336,17 @@ allowing a high degree of parallelism.
 
 We use a lock on the frame list to ensure that there are
 no race conditions when inspecting or modifying elements or the list
-structure itself. We chose to use a static lock because the frame list itself is a static data structure that is shared among all processes.
+structure itself. We chose to use a static lock because the frame list itself is a 
+static data structure that is shared among all processes.
 
-We chose this design to limit the use of global locks to places where we access shared data structures, which is the frame list. Even though the process of eviction/loading a page a process must access the supplemental page table entries of other processes, in most cases access to a supplemental page table entry is local to the owning process. For example, this occurs a process grows its stack, memory maps a file such as when installing pages. To not have a process block every time it attempts to grow its stack we decide to have separate locks for the frame list and each supplemental page table.
+We chose this design to limit the use of global locks to places where we access 
+shared data structures, which is the frame list. Even though the process of 
+eviction/loading a page a process must access the supplemental page table entries of 
+other processes, in most cases access to a supplemental page table entry is local to 
+the owning process. For example, this occurs a process grows its stack, memory maps 
+a file such as when installing pages. To not have a process block every time it 
+attempts to grow its stack we decide to have separate locks for the frame list and 
+each supplemental page table.
 
 
 			 MEMORY MAPPED FILES
@@ -381,21 +438,36 @@ union pagesup_info		/* union for storing information about
 Our implementation differentiates between several types
 of memory pages using an enum page_type indicator that is stored
 in each of the supplemental page table entries. The page_type field 
-is set by the kernel during installation of a page and is inspected during the loading and releasing of pages.
+is set by the kernel during installation of a page and is inspected during the 
+loading and releasing of pages.
 
-When an mmap system call occurs, we mapp the relevant address into the user's virtual address space, similar to data and code segments.
+When an mmap system call occurs, we mapp the relevant address into the user's 
+virtual address space, similar to data and code segments.
 
-Upon user-access of a memory-mapped page, the process of retrieving the underlying data is nearly identical to that of a segment page. The very first access to a mmapped page will trigger a fault that will cause the kernel to load the page into memory. Any successive page faults will trigger a similar reaction. However, as opposed to data segments, we always the underlying file as backing store rather than a swap slot.
+Upon user-access of a memory-mapped page, the process of retrieving the underlying 
+data is nearly identical to that of a segment page. The very first access to a 
+mmapped page will trigger a fault that will cause the kernel to load the page into 
+memory. Any successive page faults will trigger a similar reaction. However, as 
+opposed to data segments, we always the underlying file as backing store rather than 
+a swap slot.
 
 If eviction occurs on a frame that corresponds to a memory-mapped
 file's page, the eviction algorithm will detect that the
-page belongs to a memory-mapped file and will write the data back to the underlying file if it is dirty. If the page is not dirty, the kernel simply discards the data before yielding the frame.
+page belongs to a memory-mapped file and will write the data back to the underlying 
+file if it is dirty. If the page is not dirty, the kernel simply discards the data 
+before yielding the frame.
 
 >> C3: Explain how you determine whether a new file mapping overlaps
 >> any existing segment.
 
 We retrieve the file length and compute the 
-number of pages required to map the entire file. We then iterate over all required user virtual addresses corresponding to the necessary pages and verify that there does not already exist a mapping in the supplementary page table. If a page mapping exists for any of the required pages, we know that the requested file mapping will overlap another segment and thus return an error (-1) to the user. If all of the requested virtual pages are unmapped, we install the necessary virtual pages into the supplemental page table.
+number of pages required to map the entire file. We then iterate over all required 
+user virtual addresses corresponding to the necessary pages and verify that there 
+does not already exist a mapping in the supplementary page table. If a page mapping 
+exists for any of the required pages, we know that the requested file mapping will 
+overlap another segment and thus return an error (-1) to the user. If all of the 
+requested virtual pages are unmapped, we install the necessary virtual pages into 
+the supplemental page table.
 
 ---- RATIONALE ----
 
@@ -410,9 +482,15 @@ number of pages required to map the entire file. We then iterate over all requir
 While the semantics of segments and mmapped
 files are similar,
 
-The functionality for allocating/evicting frames and loading the page data into memory is for the most part identicaly across all types of user pages. Therefore we decided to consolidate as much of the code as we could. When different functionality is needed, the kernel switches on the pages type to handle the minor differences. 
+The functionality for allocating/evicting frames and loading the page data into 
+memory is for the most part identicaly across all types of user pages. Therefore we 
+decided to consolidate as much of the code as we could. When different functionality 
+is needed, the kernel switches on the pages type to handle the minor differences. 
 
-An exception to this rule is the way in which we initialize the supplemental page table entires for each pages type.  our implementation maintains unique interfaces to install segment and file mappings because we felt it would be more readable and less prone to errors.
+An exception to this rule is the way in which we initialize the supplemental page 
+table entires for each pages type.  our implementation maintains unique interfaces 
+to install segment and file mappings because we felt it would be more readable and 
+less prone to errors.
 
 
 			   SURVEY QUESTIONS
