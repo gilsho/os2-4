@@ -8,9 +8,10 @@
 
 >> Fill in the names and email addresses of your group members.
 
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
+
+Dan Cocuzzo <dcocuzzo@stanford.edu>
+Rory MacQueen <rmacqueen@stanford.edu>
+Gil Shotan <gilsho@stanford.edu>
 
 ---- PRELIMINARIES ----
 
@@ -21,13 +22,13 @@ FirstName LastName <email@domain.example>
 >> each member of your team. If some team members contributed significantly
 >> more or less than others (e.g. 2x), indicate that here.
 
-FirstName LastName: contribution
-FirstName LastName: contribution
-FirstName LastName: contribution
+All team members implemented all functionality of the project together
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
 >> text, lecture notes, and course staff.
+
+None.
 
 			PAGE TABLE MANAGEMENT
 			=====================
@@ -38,28 +39,77 @@ FirstName LastName: contribution
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-page supplemental table
+in thread.h:
+------------
+
+struct thread {
+    pagesup_table pst;                  /* Supplemental page table */
+}
+
+
+in pagesup.h:
+-------------
+
+/* the underlying data structure for the page supplementary table is a hash map */
+typedef struct hash pagesup_table;
+
+/* identifies the type of page mapped to the virtual address */
+enum page_type 
+{
+  ptype_stack,									/* a stack page */
+  ptype_segment,								/* a page mapped to a read/write segment (data) */
+  ptype_segment_readonly,				/* a page mapped to a read only segment page (code) */
+  ptype_file										/* a page mapped to a memory mapped file */
+};
+
+/* identifies the current location of a page */
+enum page_location
+{
+	ploc_none,									/* does not exist yet */
+	ploc_memory,								/* lives in memory */
+	ploc_file,									/* written to a memory mapped file*/
+	ploc_swap										/* swapped out to disk */
+};
+
+/* an entry in the page supplemental table associated with a virtual address */
+struct pagesup_entry 
+{
+	void *upage; 												/* the virtual address of a page, used to generate hash */
+	void *kpage;												/* the physical address of a page if it is currently in memory */
+	int valid_bytes;										/* the number of bytes that are physically mapped. 
+																				 values written beyond this  will be discarded if and when written to disk*/
+	enum page_type ptype;								/* the type of the page being mapped */
+	enum page_location ploc;						/* the current location of the page: memory,disk,file */
+	struct thread *owner;								/* a back-pointer the thread whose page supplementary table the entry is a member of */
+	struct lock lock;										/* a lock used to synchornize access to the page supplementary entry */
+	struct hash_elem pagesup_elem;			/* h hash elem used to embedd this entry into the page supplemental hash table */
+	struct list_elem frame_elem;				/* a list elem used to embedd this entry into a global list of frames. 
+																				 used only if the current entry is located in memory */
+	....
+
+};
+
+
 
 ---- ALGORITHMS ----
 
 >> A2: In a few paragraphs, describe your code for locating the frame,
 >> if any, that contains the data of a given page.
 
-a thread has a page supplemental table, which contains a pointer to the
-kernel address of the frame containing the page, given that the page in
-in memory.
--> upage is the hash key in the page supplemental table
+Given a page, we lookup the entry corresponding to that page in the
+page supplemental table. The page supplemental table is a hash map,
+and the virtual address of the page is used to compute the hash value
+by which the page supplemental table entry is indexed.
+
+The 'ploc' field of the page supplemental entry tells us whether this
+page currently resides in memory. If so, the 'kpage' field is populated
+with the kernel virtual address (physical address) of the frame.
 
 >> A3: How does your code coordinate accessed and dirty bits between
 >> kernel and user virtual addresses that alias a single frame, or
 >> alternatively how do you avoid the issue?
 
-We are avoiding the issue. we only access memory in kernel using 
-the kernel address.
--> we may  need to set dirty+accessed manually in write, ad set
-accessed in sys_read. OFFICE HOURS. need to check if we need to
-do this elsewhere
-
+????????????????????????????????????????????????????????????????????
 
 
 ---- SYNCHRONIZATION ----
@@ -67,18 +117,26 @@ do this elsewhere
 >> A4: When two user processes both need a new frame at the same time,
 >> how are races avoided?
 
-lock_frame is acquired prior to allocating a new frame, and is held 
-throughout the process of eviction (if necessary) and re-mapping the 
-frame to the new process
+When a process P1 page faults and requires a new frame it must obtain a 
+global lock (lock_frame). Any other process that page faults while 
+the page fault handler is handling P1's page fault will block until the
+frame lock is released. Thus, our implementation supports only one
+frame allocation at a time.
 
 ---- RATIONALE ----
 
 >> A5: Why did you choose the data structure(s) that you did for
 >> representing virtual-to-physical mappings?
 
--> page_supplemental table is hash for quick look up
-- frame table (trick with two struct elems in pse) is list 
-for consistent iteration.
+We used a hash map to represent our virtual-to-physical mapping.
+We chose this design for its speed of access and limited use memory. 
+Since page faults must be handled very quickly, locating the information
+associated with that page in the supplemental  page table should be
+a very speedy operation, and hash maps provide this lookup in O(1) time.
+Also, our supplemental page table grows dynamically with every new page
+created to provide O(n) space complexity, where n is the number of pages
+being used by a process. 
+
 
 		       PAGING TO AND FROM DISK
 		       =======================
@@ -89,10 +147,56 @@ for consistent iteration.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-frame table
-swap bitmap.
 
-THE UNION
+in frame.c:
+-----------
+
+struct lock lock_frame;							/* a lock for synchronizing access to the list of frames */
+static struct list frame_list;			/* the list of all frames currently in use */
+struct list_elem *clock_hand;				/* the last frame considered for eviction: the 'hand' of the clock algorithm */
+
+in swap.c:
+----------
+
+struct block *swap_device;					/* the starting disk block of the swap partition */
+static struct bitmap *swap_map;     /* a bitmap representing the used slots on disk */
+struct lock lock_swap;							/* a lock for synchronizing access to the swap bitmap */
+
+in pagesup.h:
+-------------
+
+
+/* contains the information for locating a page that lives in disk */
+struct file_info
+{
+	struct file *file;
+	off_t offset;
+};
+
+/* contains the information for locating a pages that has been written to a swap slot */
+struct swap_info
+{
+	size_t slot_index;
+};
+
+/* contains the information for locating a page that does not live in memory. 
+   such pages are either in a swap slot or in a file on disk */
+union pagesup_info 
+{
+	struct file_info f;
+	struct swap_info s;	
+};
+
+struct pagesup_entry 
+{
+	...
+
+	union pagesup_info info;						/* information for retrieving a page if it is not in memory */
+
+	...
+
+}
+
 
 ---- ALGORITHMS ----
 
