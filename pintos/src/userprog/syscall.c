@@ -14,6 +14,7 @@
 #include "vm/mmap.h"
 #include "vm/pagesup.h"
 #include "vm/vman.h"
+#include "userprog/pagedir.h"
 
 #define FILENAME_MAX 14
 
@@ -406,6 +407,7 @@ bool sys_read(int *stack, uint32_t *eax)
 	int fd = pop_arg(&stack);
 	uint8_t *buffer = (uint8_t *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
+	struct thread *t = thread_current();
 	
 	uint8_t *buffer_end = ((uint8_t *) buffer) + size;
 
@@ -492,6 +494,7 @@ bool sys_write(int *stack, uint32_t *eax)
 	int fd = pop_arg(&stack);
 	void *buffer = (void *) pop_arg(&stack);
 	unsigned size = (unsigned) pop_arg(&stack);
+	struct thread *t = thread_current();
 
 	void *buffer_end = ((char *) buffer) + size;
 

@@ -344,9 +344,8 @@ vman_free_all_pages(void)
 	pagesup_table *pst = &(t->pst);
 	uint32_t *pd = t->pagedir;
 	lock_acquire(&lock_frame);
-	hash_apply(pst, &destroy_helper);
 
-	page_supplement_destroy(pst);
+	page_supplement_destroy(pst,&frame_release);
 
 	/* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */

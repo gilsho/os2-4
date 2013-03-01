@@ -73,8 +73,6 @@ bool page_supplement_is_writable(struct pagesup_entry *pse);
 
 void page_supplement_free(pagesup_table *pst, struct pagesup_entry *pse);
 
-void page_supplement_destroy(pagesup_table *pst);
-
-void destroy_helper (struct hash_elem *e, void *aux UNUSED);
+void page_supplement_destroy(pagesup_table *pst, pse_destroy_func *func);
 
 #endif /* vm/page.h */

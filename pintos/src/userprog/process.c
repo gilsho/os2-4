@@ -161,9 +161,10 @@ process_execute (const char *args)
   strlcpy (args_copy, args, PGSIZE);
 
 /* Extract executable name from argument string to set as thread name */
-  char tmp[strnlen(args_copy, PGSIZE)];
-  strlcpy (tmp, args_copy, PGSIZE);
-  
+  int len = strnlen(args_copy, PGSIZE)+1;
+  char *tmp = malloc(len);
+  strlcpy (tmp, args_copy, len);
+
   char *thread_name, *save_ptr;
   thread_name = strtok_r (tmp, " ", &save_ptr);
   ASSERT(thread_name != NULL);
@@ -191,7 +192,7 @@ process_execute (const char *args)
   }
     
   palloc_free_page (args_copy); 
-  
+  free(tmp);
   if (!init_data.load_status){
     return TID_ERROR;
   }
@@ -334,7 +335,6 @@ void
 process_exit (void)
 {
   struct thread *t = thread_current ();
-  uint32_t *pd;
 
   struct process_info *info = t->process_info; 
 
