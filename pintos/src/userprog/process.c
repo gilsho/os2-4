@@ -25,13 +25,7 @@
 #include "vm/vman.h"
 
 #define INITIAL_STACK_BASE (((uint8_t *) PHYS_BASE) - PGSIZE)
-#define DUMMY_KPAGE = PHYS_BASE
 
-#if (DEBUG & DEBUG_MAP_SEGMENT)
-#define PRINT_LOAD_SEGMENT_2(X,Y) {printf("load_segment: "); printf(X,Y);}
-#else
-#define PRINT_LOAD_SEGMENT_2(X,Y) 
-#endif
 
 struct lock lock_filesys; /* a coarse global lock restricting access 
                                   to the file system */
@@ -87,7 +81,6 @@ struct file_desc
   struct list_elem elem;	/* a list elem used to embed this struct within a 
                             process' list of active files */
 };
-
 
 
 /* skip STDIN(0) and STDOUT(1) */
@@ -291,7 +284,7 @@ process_close(int status){
 /* Close all files currently opened by the exiting thread */
 void 
 close_open_files(struct process_info *info){
-   /* close all open files */
+  
   struct list_elem *e;
 
   for (e = list_begin (&(info->fd_list)); e != list_end (&(info->fd_list));) {
@@ -760,10 +753,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
-  PRINT_LOAD_SEGMENT_2("upage: %p, ",upage);
-  PRINT_LOAD_SEGMENT_2("read_bytes: %d,",read_bytes);
-  PRINT_LOAD_SEGMENT_2("writable %d\n",writable);
-
   return vman_map_segment (upage,file, ofs, read_bytes,zero_bytes,writable);
 }
 
@@ -931,7 +920,7 @@ process_get_file_desc(int fd)
   return NULL;
 }
 
-/* Removes the given open file from current threads list of open files */
+/* Removes the given (open) file from current thread's list of open files */
 void 
 process_remove_file_desc(int fd)
 {
@@ -952,44 +941,37 @@ process_remove_file_desc(int fd)
 mapid_t 
 process_map_file(void *upage, struct file * file, uint32_t file_len)
 {
-  /* 
-  1. try to allocate pages in supp table
-  2. generate next mapid_t
-  3. install file into mem-mapped file table
-  */
-
+  /* attempt to allocate pages in supp table */
   if (! vman_map_file(upage, file, file_len))
     return -1;
 
-
+  /* generate next mapid_t identifier */
   struct process_info *info = thread_current()->process_info;
   mapid_t mid = info->next_mid;
   info->next_mid++;
 
+  /* install file into mem-mapped file table */
   mmap_install_file(&(info->mmt), mid, upage, file, file_len);
 
   return mid;
 }
 
-/* remove the file associated with MID from the mem-mapped file table for the current process */
+/* remove the file associated with MID from the mem-mapped file table for the 
+   current process. returns false if no such entry exists.  */
 bool
 process_unmap_file(mapid_t mid)
 {
-  /*
-  1. check if mid is valid mme identifier
-  2. uninstall user pages from supplementary table
-  4. remove mme from mmt & free the mme struct
-  */
-
   struct process_info *info = thread_current()->process_info;
   struct mmap_entry *mme = mmap_get_entry(&info->mmt, mid);
   
-  if ( mme == NULL )
+  if ( mme == NULL ) /* check if mid is valid mme identifier */
     return false;
 
-  vman_unmap_file(mme->upage, mme->file_len);
+  /* uninstall user pages from supplementary table */
+  vman_unmap_file(mme->upage, mme->file_len); 
 
-  mmap_free(&info->mmt, mid);
+  /* remove mme from mmt & free the mme struct */
+  mmap_free(&info->mmt, mid); 
 
   return true;
 }
