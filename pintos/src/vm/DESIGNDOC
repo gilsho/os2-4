@@ -39,16 +39,18 @@ None.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-in thread.h:
-------------
+-----------------------------
+thread.h:
+-----------------------------
 
 struct thread {
     pagesup_table pst;                  /* Supplemental page table */
 }
 
 
+-----------------------------
 in pagesup.h:
--------------
+-----------------------------
 
 /* the underlying data structure for the page supplementary table is a hash map */
 typedef struct hash pagesup_table;
@@ -157,8 +159,9 @@ being used by a process.
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
 
-in frame.c:
------------
+-----------------------------
+frame.c:
+-----------------------------
 
 struct lock lock_frame;							/* a lock for synchronizing access to 
 																			 the list of frames */
@@ -168,8 +171,9 @@ struct list_elem *clock_hand;				/* the next frame to be considered for
 																			 eviction: the 'hand' of the clock 
 																			 algorithm */
 
-in swap.c:
-----------
+-----------------------------
+swap.c:
+-----------------------------
 
 struct block *swap_device;					/* the starting disk block of the swap 
 																			 partition */
@@ -178,9 +182,9 @@ static struct bitmap *swap_map;     /* a bitmap representing the
 struct lock lock_swap;							/* a global lock for synchronizing 
 																			 access to the swap bitmap */
 
-in pagesup.h:
--------------
-
+-----------------------------
+pagesup.h:
+-----------------------------
 
 /* contains the information for locating a page that lives in disk */
 struct file_info
@@ -298,12 +302,10 @@ taken it off the frame table and written it to disk (if necessary).
 >> cannot interfere by e.g. attempting to evict the frame while it is
 >> still being read in?
 
-While process P was reading in a page from disk, it would be holding the frame table 
-lock. No other process can begin the eviction process until it acquires the frame 
-lock - hence, process Q must wait unti process P has successfully read in its page 
-from disk before process Q can evict that page. The basic idea is that our system 
-handles one page fault or eviction at a time. This ensures that we don't encounter 
-race conditions between multiple evictions and page faults.
+While process P is reading in a page from disk, it holds a lock on the particular
+frame, which in our design is also the supplemental page table entry for the page.
+Process Q, when looking for a frame to evict, skips frames in the frame talbe whose
+lock is currently being held and will therefore skip the frame held by process P.
 
 >> B8: Explain how you handle access to paged-out pages that occur
 >> during system calls.  Do you use page faults to bring in pages (as
@@ -342,11 +344,9 @@ static data structure that is shared among all processes.
 We chose this design to limit the use of global locks to places where we access 
 shared data structures, which is the frame list. Even though the process of 
 eviction/loading a page a process must access the supplemental page table entries of 
-other processes, in most cases access to a supplemental page table entry is local to 
-the owning process. For example, this occurs a process grows its stack, memory maps 
-a file such as when installing pages. To not have a process block every time it 
-attempts to grow its stack we decide to have separate locks for the frame list and 
-each supplemental page table.
+other processes, in other cases the processes only needs restricted access to
+one particular frame. Our design tries to minimize the time in which the corase, global locks are held, and use the more finer granularity locks when possible.
+
 
 
 			 MEMORY MAPPED FILES
