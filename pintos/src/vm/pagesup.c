@@ -7,14 +7,6 @@
 #include "threads/vaddr.h"
 #include "threads/thread.h"
 
-
-
-#if (DEBUG & DEBUG_IS_MAPPED)
-#define PRINT_IS_MAPPED_2(X,Y) {printf("page_supplement_is_mapped: "); printf(X,Y);}
-#else
-#define PRINT_IS_MAPPED_2(X,Y) do {} while(0)
-#endif
-
 bool page_supplement_cmp(const struct hash_elem *a,
             						const struct hash_elem *b,
                     		void *aux);
@@ -29,6 +21,26 @@ page_supplement_init(pagesup_table *pst)
 	hash_init(pst, &page_supplement_hash, &page_supplement_cmp, NULL);
 }
 
+/*
+	########################################################################
+
+	The three functions below all handle installation of virtual address pages
+	into the supplementary page table. The three functions handle the installation
+	of memory mapped file pages, stack pages, and data/code segment pages respectively.
+
+	Althogh these three functions share a lot of similarity and indeed use some of the 
+	same code, we decided that it was worthwhile to split them up into three separate 
+	functions, since it made for more readable code, and more importantly, allowed
+	us to better handle the subtle differences in how different types of pages are
+	handled in memory.
+
+	########################################################################
+*/
+
+
+/*
+	Installs a memory mapped file page into the supplementary page table.
+*/
 void page_supplement_install_filepage(pagesup_table *pst, void *upage,int valid_bytes, struct file *file,
 																		 off_t offset)
 {
@@ -47,6 +59,9 @@ void page_supplement_install_filepage(pagesup_table *pst, void *upage,int valid_
 	ASSERT (he == NULL);
 }
 
+/*
+	Installs a stack page into the supplementary page table.
+*/
 void 
 page_supplement_install_stackpage(pagesup_table *pst, uint8_t *upage)
 {
@@ -63,6 +78,9 @@ page_supplement_install_stackpage(pagesup_table *pst, uint8_t *upage)
 	ASSERT (he == NULL)
 }
 
+/*
+	Installs a code or data segment page into the supplementary page table.
+*/
 void 
 page_supplement_install_segpage(pagesup_table *pst,void *upage,int valid_bytes, struct file *file,
 																		 off_t offset, bool writable) {
@@ -82,7 +100,9 @@ page_supplement_install_segpage(pagesup_table *pst,void *upage,int valid_bytes, 
 }
 
 
-/* MUST be called before upage is set to NULL */
+/* 
+	Frees a page entry from the supplementary page table
+*/
 void 
 page_supplement_free(pagesup_table *pst, struct pagesup_entry *pse)
 {
@@ -92,6 +112,10 @@ page_supplement_free(pagesup_table *pst, struct pagesup_entry *pse)
 }
 
 
+/*
+	Retrieves an entry from the supplementary page table. The key 
+	for the hash table is the user virtual address.
+*/
 struct pagesup_entry *
 page_supplement_get_entry(pagesup_table *pst, void *upage)
 {
@@ -107,6 +131,12 @@ page_supplement_get_entry(pagesup_table *pst, void *upage)
 	return hash_entry(he, struct pagesup_entry,pagesup_elem);
 }
 
+/*
+	Checks to see if a given virtual address has been mapped in
+	the give supplementary page table. Simply checks to see in the
+	page entry exists.
+*/
+
 bool 
 page_supplement_is_mapped(pagesup_table *pst, void *uaddr)
 {
@@ -115,6 +145,10 @@ page_supplement_is_mapped(pagesup_table *pst, void *uaddr)
 	return (pse != NULL);
 }
 
+/* 
+	Checks to see if a give page entry is writable.
+*/
+
 bool 
 page_supplement_is_writable(struct pagesup_entry *pse)
 {
@@ -122,6 +156,9 @@ page_supplement_is_writable(struct pagesup_entry *pse)
 	return writable;
 }
 
+/* 
+	Comparator function needed to implement hash table
+*/
 bool 
 page_supplement_cmp(const struct hash_elem *a,
             						const struct hash_elem *b,
@@ -132,12 +169,22 @@ page_supplement_cmp(const struct hash_elem *a,
 	return pse_a->upage < pse_b->upage;
 }
 
+/* 
+	Hash function needed to implement hash table
+*/
+
 unsigned 
 page_supplement_hash(const struct hash_elem *e, void *aux UNUSED)
 {
 	struct pagesup_entry *pse = hash_entry(e, struct pagesup_entry, pagesup_elem);
 	return hash_int((int) pse->upage);
 }
+
+/*
+	Destroys the supplementary page table. Sets an entry destroy function
+	as the auxiliary variable on the page table. Destroys the hash table
+	while passing in a destroy helper function. 
+*/
 
 void
 page_supplement_destroy(pagesup_table *pst, pse_destroy_func *func)
@@ -146,6 +193,12 @@ page_supplement_destroy(pagesup_table *pst, pse_destroy_func *func)
 	hash_destroy (pst, &destroy_helper); 
 }
 
+/*
+	Helper function to destroy each entry in the supplementary page table
+	We use the auxiliary variable to pass in another function, which releases the 
+	page entry from the frame table.
+	It is also crucial that we set ploc back to ploc_none
+*/
 void
 destroy_helper (struct hash_elem *e, void *aux)
 {

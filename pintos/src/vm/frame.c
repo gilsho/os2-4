@@ -8,23 +8,15 @@
 #include <stdio.h>
 #include <string.h>
 
-
-#if (DEBUG & DEBUG_FRAME)
-#define PRINT_FRAME(X) {printf("frame_list: "); printf(X);}
-#define PRINT_FRAME_2(X,Y) {printf("frame_list: "); printf(X,Y);}
-#else
-#define PRINT_FRAME(X) do {} while(0)
-#define PRINT_FRAME_2(X,Y) do {} while(0)
-#endif
-
-/*
-#define PRINT_FRAME(X) do {} while(0)
-#define PRINT_FRAME_2(X,Y) do {} while(0)
-*/
 extern struct lock lock_filesys;
 
+/* A lock for the frame table */
 struct lock lock_frame;
+
+/* Frame table is stored as a list data structure */
 struct list frame_list;
+
+/* The clock hand is stored as a pointer to an list element */
 static struct list_elem *clock_hand;
 
 void frame_clock_advance(void);
@@ -38,6 +30,9 @@ frame_init_table()
 	clock_hand = list_head(&frame_list);
 }
 
+/* This function will return a frame for use. First it tries to get a frame from the
+free page pool. If it cannot find one there, it uses the clock algorithm
+to evict a current page and return that frame. */
 void *
 frame_alloc(void)
 {	
@@ -45,111 +40,81 @@ frame_alloc(void)
   if (kpage == NULL) 
   {
   	/* CLOCK ALGORITHM */
-  	/*lock_acquire(&lock_frame);*/
   	while (true) 
   	{
   		frame_clock_advance();
 
   		struct pagesup_entry *pse = list_entry(clock_hand, struct pagesup_entry, frame_elem);
   		
+  		/* Must have the lock for this entry before trying to evict it */
   		if (lock_try_acquire(&pse->lock))
   		{
-  			/*PRINT_FRAME_2("type: %d\n", pse->ptype);
-  			PRINT_FRAME_2("location: %d\n", pse->ploc);
-  			PRINT_FRAME_2("upage: %p\n", pse->upage);
-  			printf("owner: %s\n", pse->owner->name);
-  			printf("tid: %d\n", pse->owner->tid);
-  			printf("kpage: %p\n", pse->kpage);*/
-  			/*if (pse->ploc != ploc_memory){
-  				lock_release(&pse->lock);
-  				continue;
-  			}*/
   			ASSERT(pse->ploc == ploc_memory);
   			uint32_t *pd = pse->owner->pagedir;
   			if (!pagedir_is_accessed(pd, pse->upage) )
   			{
-
-  				/*PRINT_FRAME("found pse to evict\n");
-  				PRINT_FRAME_2("upage: %p\n", pse->upage);
-  				PRINT_FRAME_2("kpage: %p\n", pse->kpage);*/
   				kpage = pse->kpage;
   				frame_evict(pse);
   				lock_release(&pse->lock);
   				break;
   			}
   			else {
+  				/* Clear the page accessed bit */
   				pagedir_set_accessed (pd, pse->upage, false);
-  				/*
-  				PRINT_FRAME("clearing pse access bit\n");
-  				PRINT_FRAME_2("upage: %p\n", pse->upage);
-  				PRINT_FRAME_2("kpage: %p\n", pse->kpage);
-  				*/
   			}
 
   			lock_release(&pse->lock);
   		}
   	}
 
-  	/*lock_release(&lock_frame);*/
   }
   memset(kpage, 0, PGSIZE);
   return kpage;
 }
 
-/* assumes caller has the lock_frame */
+/* 
+	Installs a frame into the frame table. Caller should be holding
+	frame table lock
+*/
 void
 frame_install(struct pagesup_entry *pse, void *kpage)
 {
-	/*PRINT_FRAME_2("installing PSE @ kpage: %p\n", kpage);*/
 	pse->kpage = kpage;
-	/*lock_acquire(&lock_frame);*/
 	list_push_back(&frame_list,&pse->frame_elem);
-	/*lock_release(&lock_frame);*/
 }
 
+/*
+	Releases the frame being held by the give page table entry.
+	Must be careful here to update the clock hand if the clock
+	hand happens to point to the frame that is being released.
+	Caller must have frame table lock.
+*/
 void 
 frame_release(struct pagesup_entry *pse)
 {
-	/*lock_acquire(&lock_frame);*/
-
-	/*PRINT_FRAME_2("frame_release upage: %p\n", pse->upage);
-	PRINT_FRAME_2("frame_release loc: %d\n", pse->ploc);*/
 
 	if (pse->ploc == ploc_memory) {
-		/*PRINT_FRAME_2("removing from list: %p\n", pse->upage);*/
-		/*PRINT_FRAME_2("frame_release kpage: %p\n", pse->kpage);*/
 
-		/*struct pagesup_entry *cpse = list_entry(clock_hand,struct pagesup_entry,frame_elem);*/
-		/*if (clock_hand == list_tail(&frame_list)) {
-			printf("CLOCK_HAND IS NULL\n");
-		} else {
-		printf("clock_hand->upage: %p, t:%d, ploc:%d \t pse->upage: %p, t: %d, ploc:%d\n",
-			cpse->upage, cpse->owner->tid,cpse->ploc,
-			pse->upage,pse->owner->tid,pse->ploc);
-		}*/
 		if (clock_hand == &pse->frame_elem) {
-			/*printf("FOUND FOUND FOUND FOUND FOUND FOUND ALERT ALERT ALERT!\n");
-			ASSERT(clock_hand != list_head(&frame_list));
-			ASSERT(clock_hand != list_tail(&frame_list));*/
 			clock_hand = list_next(clock_hand);	
 		}
 
 		list_remove(&pse->frame_elem);
 
-		/* assume pagedir_destroy will free the physical pages */
-		/*palloc_free_page (pse->kpage);*/
 		pse->kpage = NULL;
 	}
 	else if (pse->ploc == ploc_swap)
 	{
-		/*PRINT_FRAME_2("frame_release swap slot: %d\n", pse->info.s.slot_index);*/
 		swap_release_slot((size_t) pse->info.s.slot_index);
 	}	
-	/*lock_release(&lock_frame);*/
 
 }
 
-/* caller must have frame lock */
+/* 
+	Advances the clock hand. Ensures that, at the end of this function
+	the clock hand points to an interior element in the list.
+	Caller must have frame lock 
+*/
 void
 frame_clock_advance(void)
 {
@@ -164,7 +129,17 @@ frame_clock_advance(void)
 	ASSERT(clock_hand != list_tail(&frame_list));
 }
 
-/* Assumes caller has lock for PSE */
+/* 
+	Evicts the given page entry from the frame table. 
+	Correct ordering here is crucial. We must first clear the page
+	directory, so that any page accessess will now page fault.
+	We then switch on the type of page. If it is code (read-only), then
+	there is no need to write to disk. If it is stack or data, it must
+	be written to swap. For mmap files, we only write to file if the
+	page is dirty
+	Caller must hold both the frame table lock and the lock for the given
+	PSE 
+*/
 void
 frame_evict(struct pagesup_entry *pse)
 {
@@ -182,9 +157,6 @@ frame_evict(struct pagesup_entry *pse)
 	ASSERT( e != NULL );
 
 	if (clock_hand == &pse->frame_elem) {
-		/*printf("FOUND FOUND FOUND FOUND FOUND FOUND ALERT ALERT ALERT!\n");
-		ASSERT(clock_hand != list_head(&frame_list));
-		ASSERT(clock_hand != list_tail(&frame_list));*/
 		clock_hand = list_next(clock_hand);	
 	}
 
@@ -223,11 +195,11 @@ frame_evict(struct pagesup_entry *pse)
 	ASSERT(pse->ploc != ploc_memory);
 }
 
+/* 
+	Helper function to write a page to the swap space.
+*/
 void
 frame_swap_out(struct pagesup_entry *pse, void *buff)
 {
 	pse->info.s.slot_index = swap_write_slot(buff);
-	/*PRINT_FRAME("writing to swap file\n");
-	PRINT_FRAME_2("slot: %d\n", (int)pse->info.s.slot_index);
-	PRINT_FRAME_2("upage: %p\n", pse->upage);*/
 }
