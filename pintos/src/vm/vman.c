@@ -121,20 +121,18 @@ vman_map_segment (void *upage, struct file *file, off_t offset, int init_data_by
    loaded from file or paged in from swap, and code segements and memory
     mapped files are always read from file.
 
-    IMPORTANT: the lock on the supplementary page table entry remains
-    					 held after the termination of this function.
+    IMPORTANT: this function releases the frame list lock.
  */
 void
 vman_load_page_helper(struct pagesup_entry *pse)
 {
 
+	ASSERT(lock_held_by_current_thread(&lock_frame));
+	ASSERT(lock_held_by_current_thread(&pse->lock));
+
 	ASSERT(pse->ploc != ploc_memory);
 
 	struct thread *t = thread_current();
-
-	/* acquire locks in order */
-	lock_acquire(&lock_frame);
-	lock_acquire(&pse->lock);
 
 	void *kpage = frame_alloc();
 
@@ -187,14 +185,18 @@ vman_load_page(void *upage)
 	struct thread *t = thread_current();
   struct pagesup_entry *pse = page_supplement_get_entry(&t->pst, upage); 
 
-  vman_load_page_helper(pse);
+  lock_acquire(&lock_frame);
+  lock_acquire(&pse->lock);
+
+  vman_load_page_helper(pse); /*releases lock_frame*/
+
   lock_release(&pse->lock);
 	
 }
 
 /* pins a page into memory. utilizes vman_load_page_helper. the lock for the 
 	 page supplemental table entry is held after the function finishes execution,
-	 preventing the page from being evicted to memory.
+	 preventing the page from being evicted from memory.
 	 */
 void
 vman_pin_page(void *upage)
@@ -203,10 +205,13 @@ vman_pin_page(void *upage)
 	pagesup_table *pst = &(thread_current()->pst);
 	struct pagesup_entry *pse = page_supplement_get_entry(pst,upage);
 
+	lock_acquire(&lock_frame);
+	lock_acquire(&pse->lock);
+
 	if (pse->ploc != ploc_memory)
-		vman_load_page_helper(pse);
-	else
-		lock_acquire(&pse->lock);
+		vman_load_page_helper(pse); /*releases lock_frame*/
+	else 
+		lock_release(&lock_frame);
 
 }
 
