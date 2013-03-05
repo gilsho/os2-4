@@ -11,15 +11,20 @@
 
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
+#define N_DIRECT_PTRS 12
+#define N_INDIRECT_PTRS (BLOCK_SECTOR_SIZE/sizeof(block_sector_t))
+#define N_DBL_INDIRECT_PTRS (N_INDIRECT_PTRS * N_INDIRECT_PTRS)
 
 /* On-disk inode.
    Must be exactly BLOCK_SECTOR_SIZE bytes long. */
 struct inode_disk
   {
-    block_sector_t start;               /* First data sector. */
-    off_t length;                       /* File size in bytes. */
-    unsigned magic;                     /* Magic number. */
-    uint32_t unused[125];               /* Not used. */
+    block_sector_t direct[N_DIRECT_PTRS];  /* first-order data sector. */
+    block_sector_t indirect;
+    block_sector_t dbl_indirect;
+    off_t length;                                 /* File size in bytes. */
+    unsigned magic;                               /* Magic number. */
+    uint32_t unused[123];                         /* Not used. */
   };
 
 /* Returns the number of sectors to allocate for an inode SIZE
@@ -38,7 +43,6 @@ struct inode
     int open_cnt;                       /* Number of openers. */
     bool removed;                       /* True if deleted, false otherwise. */
     int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
-    struct inode_disk data;             /* Inode content. */
   };
 
 /* Returns the block device sector that contains byte offset POS
@@ -49,10 +53,63 @@ static block_sector_t
 byte_to_sector (const struct inode *inode, off_t pos) 
 {
   ASSERT (inode != NULL);
-  if (pos < inode->data.length)
-    return inode->data.start + pos / BLOCK_SECTOR_SIZE;
-  else
+
+  block_sector_t sector_idx = -1;
+
+  int block_num = pos/BLOCK_SECTOR_SIZE;
+
+  off_t length;
+  off_t length_ofs = offsetof (struct inode_disk, length);
+  cache_read (inode->sector, &length, length_ofs, sizeof(off_t),true); 
+
+  if (pos < 0 || pos >= length)
     return -1;
+
+
+  if (block_num < N_DIRECT_PTRS) 
+  {
+    block_sector_t direct[N_DIRECT_PTRS];
+    off_t sector_ofs = offsetof (struct inode_disk, direct);
+    cache_read (inode->sector, &direct, sector_ofs, sizeof(block_sector_t)*N_DIRECT_PTRS,true); 
+    sector_idx = direct[block_num];
+  }  
+
+  else if (block_num < (int)(N_DIRECT_PTRS + N_INDIRECT_PTRS)) 
+  {
+    block_sector_t indirect;
+    off_t sector_ofs = offsetof(struct inode_disk, indirect);
+    cache_read(inode->sector, &indirect, sector_ofs, sizeof(block_sector_t),true);
+
+
+    int indirect_block_num = (block_num - N_DIRECT_PTRS);
+    off_t indirect_sector_ofs =  indirect_block_num * sizeof(block_sector_t);
+    cache_read (indirect, &sector_idx, indirect_sector_ofs, sizeof(block_sector_t),true); 
+  } 
+
+
+  else if (block_num < (int) (N_DBL_INDIRECT_PTRS + N_INDIRECT_PTRS + N_DIRECT_PTRS)) 
+  {
+    block_sector_t dbl_indirect, indirect;
+
+    off_t sector_ofs = offsetof(struct inode_disk,dbl_indirect);
+    cache_read(inode->sector, &dbl_indirect, sector_ofs, sizeof(block_sector_t),true);
+
+    int trunc_block_num = (block_num - N_DIRECT_PTRS - N_INDIRECT_PTRS);
+
+    int dbl_indirect_block_num = trunc_block_num / N_INDIRECT_PTRS;
+    off_t dbl_indirect_sector_ofs = dbl_indirect_block_num * sizeof(block_sector_t);
+    cache_read(dbl_indirect, &indirect, dbl_indirect_sector_ofs, sizeof(block_sector_t), true);
+
+    ASSERT (indirect != 0);
+
+    int indirect_block_num = trunc_block_num % N_INDIRECT_PTRS;
+    off_t indirect_sector_ofs = indirect_block_num * sizeof(block_sector_t);
+    cache_read(indirect, &sector_idx, indirect_sector_ofs, sizeof(block_sector_t), true);
+
+  }
+
+  return sector_idx;
+
 }
 
 /* List of open inodes, so that opening a single inode twice
@@ -89,6 +146,43 @@ inode_create (block_sector_t sector, off_t length)
       size_t sectors = bytes_to_sectors (length);
       disk_inode->length = length;
       disk_inode->magic = INODE_MAGIC;
+
+      int remaining_bytes = length;
+      int cur_block = 0;
+      while (remaning_bytes > 0) 
+      {
+        
+        if (cur_block < N_DIRECT_PTRS) 
+        {
+          block_sector_t new_sector;
+          if (!free_map_allocate (1,&new_sector))
+            return -1;
+          
+          disk_inode->direct[cur_block] = new_sector;
+        }
+        else if (cur_block < N_INDIRECT_PTRS + N_DIRECT_PTRS)
+        {
+          block_sector_t indirect = 0;
+          if (cur_block == N_DIRECT_PTRS) {
+            if (!free_map_allocate (1,&indirect))
+              return -1;
+            disk_inode->indirect = indirect;
+          } else {
+            indirect = disk_inode->indirect;
+          }
+
+          block_sector_t new_sector;
+          if (!free_map_allocate(1,&new_sector))
+            return -1;
+
+
+        }
+
+
+
+        cur_block++;
+      }
+      /* Finds contiguous region on disk. not needed anymore
       if (free_map_allocate (sectors, &disk_inode->start)) 
         {
           block_write (fs_device, sector, disk_inode);
@@ -101,7 +195,7 @@ inode_create (block_sector_t sector, off_t length)
                 block_write (fs_device, disk_inode->start + i, zeros);
             }
           success = true; 
-        } 
+        } */
       free (disk_inode);
     }
   return success;
