@@ -45,6 +45,52 @@ struct inode
     int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
   };
 
+
+int 
+inode_get_length(struct inode *inode) 
+{
+  int length;
+  off_t sector_ofs = offsetof (struct inode_disk, length);
+  cache_read (inode->sector, &length, sector_ofs, sizeof(int),true); 
+  return length;
+} 
+
+block_sector_t 
+inode_get_direct_sector(struct inode *inode, int index)
+{
+  block_sector_t direct[N_DIRECT_PTRS];
+  off_t sector_ofs = offsetof (struct inode_disk, direct);
+  cache_read (inode->sector, &direct, sector_ofs, sizeof(block_sector_t)*N_DIRECT_PTRS,true); 
+  return direct[index];
+}
+
+block_sector_t 
+inode_get_indirect_sector_table(struct inode *inode)
+{
+  block_sector_t indirect;
+  off_t sector_ofs = offsetof(struct inode_disk, indirect);
+  cache_read(inode->sector, &indirect, sector_ofs, sizeof(block_sector_t),true);
+  return indirect;
+}
+
+block_sector_t 
+inode_get_dbl_indirect_sector_table(struct inode *inode)
+{
+  block_sector_t dbl_indirect;
+  off_t sector_ofs = offsetof(struct inode_disk,dbl_indirect);
+  cache_read(inode->sector, &dbl_indirect, sector_ofs, sizeof(block_sector_t),true); 
+  return dbl_indirect;
+}
+
+block_sector_t 
+inode_get_sector_table_entry(block_sector_t sector_table, int index)
+{
+  block_sector_t sector_entry;
+  off_t ector_ofs =  index * sizeof(block_sector_t);
+  cache_read (sector_table, &sector_entry, sector_ofs, sizeof(block_sector_t),true); 
+  return sector_entry;
+}
+
 /* Returns the block device sector that contains byte offset POS
    within INODE.
    Returns -1 if INODE does not contain data for a byte at offset
@@ -58,57 +104,42 @@ byte_to_sector (const struct inode *inode, off_t pos)
 
   int block_num = pos/BLOCK_SECTOR_SIZE;
 
-  off_t length;
-  off_t length_ofs = offsetof (struct inode_disk, length);
-  cache_read (inode->sector, &length, length_ofs, sizeof(off_t),true); 
+  off_t length = inode_get_length(inode);
 
   if (pos < 0 || pos >= length)
     return -1;
 
 
-  if (block_num < N_DIRECT_PTRS) 
-  {
-    block_sector_t direct[N_DIRECT_PTRS];
-    off_t sector_ofs = offsetof (struct inode_disk, direct);
-    cache_read (inode->sector, &direct, sector_ofs, sizeof(block_sector_t)*N_DIRECT_PTRS,true); 
-    sector_idx = direct[block_num];
-  }  
+  if (block_num < N_DIRECT_PTRS) {
+    return inode_get_direct_sector(inode,block_num);
+  }
 
   else if (block_num < (int)(N_DIRECT_PTRS + N_INDIRECT_PTRS)) 
   {
-    block_sector_t indirect;
-    off_t sector_ofs = offsetof(struct inode_disk, indirect);
-    cache_read(inode->sector, &indirect, sector_ofs, sizeof(block_sector_t),true);
 
+    int trunc_block_num = (block_num - N_DIRECT_PTRS);
 
-    int indirect_block_num = (block_num - N_DIRECT_PTRS);
-    off_t indirect_sector_ofs =  indirect_block_num * sizeof(block_sector_t);
-    cache_read (indirect, &sector_idx, indirect_sector_ofs, sizeof(block_sector_t),true); 
+    block_sector_t indirect_table = inode_get_indirect_sector_table(inode);
+    return inode_get_sector_table_entry(indirect_table,trunc_block_num);
   } 
 
-
   else if (block_num < (int) (N_DBL_INDIRECT_PTRS + N_INDIRECT_PTRS + N_DIRECT_PTRS)) 
-  {
-    block_sector_t dbl_indirect, indirect;
-
-    off_t sector_ofs = offsetof(struct inode_disk,dbl_indirect);
-    cache_read(inode->sector, &dbl_indirect, sector_ofs, sizeof(block_sector_t),true);
-
+  {    
     int trunc_block_num = (block_num - N_DIRECT_PTRS - N_INDIRECT_PTRS);
+    block_sector_t dbl_indirect_table = inode_get_dbl_indirect_sector_table(inode);
+    
+    int index = trunc_block_num / N_INDIRECT_PTRS;
+    block_sector_t indirect_table = inode_get_sector_table_entry(dbl_indirect_table,index);
 
-    int dbl_indirect_block_num = trunc_block_num / N_INDIRECT_PTRS;
-    off_t dbl_indirect_sector_ofs = dbl_indirect_block_num * sizeof(block_sector_t);
-    cache_read(dbl_indirect, &indirect, dbl_indirect_sector_ofs, sizeof(block_sector_t), true);
+    index = trunc_block_num & N_INDIRECT_PTRS;
+    return inode_get_sector_table_entry(indirect_table,index);
+  } 
 
-    ASSERT (indirect != 0);
-
-    int indirect_block_num = trunc_block_num % N_INDIRECT_PTRS;
-    off_t indirect_sector_ofs = indirect_block_num * sizeof(block_sector_t);
-    cache_read(indirect, &sector_idx, indirect_sector_ofs, sizeof(block_sector_t), true);
-
+  else {
+    /* file too big */
+    PANIC("file access exceeded max file capacity");
+    return -1;
   }
-
-  return sector_idx;
 
 }
 
@@ -160,6 +191,7 @@ inode_create (block_sector_t sector, off_t length)
           
           disk_inode->direct[cur_block] = new_sector;
         }
+
         else if (cur_block < N_INDIRECT_PTRS + N_DIRECT_PTRS)
         {
           block_sector_t indirect = 0;
@@ -174,6 +206,7 @@ inode_create (block_sector_t sector, off_t length)
           block_sector_t new_sector;
           if (!free_map_allocate(1,&new_sector))
             return -1;
+          
 
 
         }
