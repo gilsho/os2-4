@@ -86,7 +86,7 @@ block_sector_t
 inode_get_sector_table_entry(block_sector_t sector_table, int index)
 {
   block_sector_t sector_entry;
-  off_t ector_ofs =  index * sizeof(block_sector_t);
+  off_t sector_ofs =  index * sizeof(block_sector_t);
   cache_read (sector_table, &sector_entry, sector_ofs, sizeof(block_sector_t),true); 
   return sector_entry;
 }
@@ -163,7 +163,7 @@ bool
 inode_create (block_sector_t sector, off_t length)
 {
   struct inode_disk *disk_inode = NULL;
-  bool success = false;
+  bool success = true;
 
   ASSERT (length >= 0);
 
@@ -173,47 +173,90 @@ inode_create (block_sector_t sector, off_t length)
 
   disk_inode = calloc (1, sizeof *disk_inode);
   if (disk_inode != NULL)
-    {
-      size_t sectors = bytes_to_sectors (length);
-      disk_inode->length = length;
-      disk_inode->magic = INODE_MAGIC;
+    return false;
 
-      int remaining_bytes = length;
-      int cur_block = 0;
-      while (remaning_bytes > 0) 
-      {
+  size_t sectors = bytes_to_sectors (length);
+  disk_inode->length = length;
+  disk_inode->magic = INODE_MAGIC;
+
+  int remaining_bytes = length;
+  int cur_block = 0;
+  while (remaining_bytes > 0) 
+    {
         
-        if (cur_block < N_DIRECT_PTRS) 
+      if (cur_block < N_DIRECT_PTRS) 
         {
           block_sector_t new_sector;
-          if (!free_map_allocate (1,&new_sector))
-            return -1;
+          if (!free_map_allocate (1,&new_sector)){
+            success = false;
+            break;
+          }
           
           disk_inode->direct[cur_block] = new_sector;
         }
-
-        else if (cur_block < N_INDIRECT_PTRS + N_DIRECT_PTRS)
+        else if (cur_block < (int)(N_INDIRECT_PTRS + N_DIRECT_PTRS))
         {
-          block_sector_t indirect = 0;
-          if (cur_block == N_DIRECT_PTRS) {
-            if (!free_map_allocate (1,&indirect))
-              return -1;
-            disk_inode->indirect = indirect;
-          } else {
-            indirect = disk_inode->indirect;
+          if(disk_inode->indirect == 0){
+            if(!free_map_allocate(1, &(disk_inode->indirect))) {
+                success = false;
+                break;
+            }
           }
 
           block_sector_t new_sector;
-          if (!free_map_allocate(1,&new_sector))
-            return -1;
-          
+          if(!free_map_allocate(1, &new_sector)){
+            success = false;
+            break;
+          }
 
+          cache_write (disk_inode->indirect, &new_sector, 
+                 (cur_block - N_DIRECT_PTRS) * sizeof(block_sector_t), 
+                 sizeof(block_sector_t), true);
+        }
+
+        else if (cur_block <  (int) (N_DBL_INDIRECT_PTRS + N_INDIRECT_PTRS + N_DIRECT_PTRS))
+        {
+
+          if(disk_inode->dbl_indirect == 0){
+            if(!free_map_allocate(1, &(disk_inode->dbl_indirect))) {
+                success = false;
+                break;
+            }
+          }
+
+          int dbl_indirect_idx = (cur_block - N_DIRECT_PTRS - N_INDIRECT_PTRS) / N_INDIRECT_PTRS;
+          int indirect_idx = (cur_block - N_DIRECT_PTRS - N_INDIRECT_PTRS) % N_INDIRECT_PTRS;
+          block_sector_t indirect_sector;
+          if(indirect_idx == 0){
+            if(!free_map_allocate(1, &indirect_sector)){
+              success = false;
+              break;
+            }
+            cache_write(disk_inode->dbl_indirect, &indirect_sector, 
+              dbl_indirect_idx * sizeof(block_sector_t),
+              sizeof(block_sector_t), true);
+          }else{
+            cache_read(disk_inode->dbl_indirect, &indirect_sector, 
+              dbl_indirect_idx * sizeof(block_sector_t),
+              sizeof(block_sector_t), true);
+          }
+
+          block_sector_t new_sector;
+          
+          if(!free_map_allocate(1, &new_sector)){
+            success = false;
+            break;
+          }
+          cache_write(indirect_sector, &new_sector, 
+              indirect_idx * sizeof(block_sector_t),
+              sizeof(block_sector_t), true);
 
         }
 
 
 
         cur_block++;
+        remaining_bytes -= BLOCK_SECTOR_SIZE;
       }
       /* Finds contiguous region on disk. not needed anymore
       if (free_map_allocate (sectors, &disk_inode->start)) 
@@ -229,8 +272,14 @@ inode_create (block_sector_t sector, off_t length)
             }
           success = true; 
         } */
+      if(!success){
+        /* CLEAN UP INODE */
+      }else{
+        /* WRITE INODE TO DISK */
+      }
+
       free (disk_inode);
-    }
+    
   return success;
 }
 
