@@ -305,17 +305,62 @@ void
 inode_free_sectors(struct inode_disk *disk_inode)
 {
   size_t num_sectors = bytes_to_sectors (disk_inode->length);
+  ASSERT(num_sectors < (int) N_DIRECT_PTRS + N_INDIRECT_PTRS + N_DBL_INDIRECT_PTRS);
 
-  /* clean up direct data sectors */
-  int i;
-  for (i = 0; i < N_DIRECT_PTRS; i++)
+  int cur_block;
+  for (cur_block = 0; cur_block < num_sectors; cur_block++)
   {
-    if (disk_inode->direct[i] != NULL)
+    /* clean up direct data sectors */
+    if (cur_block < N_DIRECT_PTRS)
     {
-      free_map_release (disk_inode->direct[i], 1);
-      disk_inode->direct[i] = NULL;
+      if (disk_inode->direct[cur_block] != NULL)
+      {
+        free_map_release (disk_inode->direct[i], 1);
+        disk_inode->direct[i] = NULL;
+      }
     }
+
+    /* clean up indirect sectors, meta & data */
+    else if (cur_block < N_DIRECT_PTRS + N_INDIRECT_PTRS)
+    {
+
+      block_sector_t data_sector;
+      off_t sector_ofs = i * sizeof(block_sector_t);
+      cache_read(disk_node->indirect, &data_sector, 
+                 sector_ofs, sizeof(block_sector_t),true);
+
+      if (data_sector != NULL)
+      {
+        free_map_release (disk_inode->direct[i], 1);
+        /* TODO: clear the indirect entry? */
+      }
+    }
+
+    /* clean up dbl indirect sectors, meta & data */
+    else
+    {
+
+
+
+      /* free dbl indirect table sector */
+      free_map_release (disk_inode->dbl_indirect, 1);
+    }
+
   }
+
+  /* free indirect table sector */
+  free_map_release (disk_inode->indirect, 1);
+
+  
+
+  /* free dbl indirect table sector */
+  free_map_release (disk_inode->dbl_indirect, 1);
+
+
+
+
+
+
 
   /* clean up indirect sectors, meta & data */
   if (disk_inode->indirect != NULL)
@@ -357,8 +402,8 @@ inode_free_sectors(struct inode_disk *disk_inode)
         {
 
         }
-        
-        
+
+
       }
 
 
