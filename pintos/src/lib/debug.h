@@ -18,6 +18,13 @@ void debug_panic (const char *file, int line, const char *function,
 void debug_backtrace (void);
 void debug_backtrace_all (void);
 
+#define DEBUG_INODE		 1
+#define DEBUG_FILE		(1 << 2)
+#define DEBUG_FILESYS	(1 << 3)
+
+#define DEBUG 0
+/*#define DEBUG (DEBUG_INODE)*/
+
 #endif
 
 

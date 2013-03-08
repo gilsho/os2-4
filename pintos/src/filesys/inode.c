@@ -10,12 +10,53 @@
 #include "threads/thread.h"
 #include <stdio.h>
 
+
+#if (DEBUG & DEBUG_INODE)
+#define DEBUG_EXTEND
+#define DEBUG_CREATE
+#define DEBUG_OPEN
+#define DEBUG_READ
+#define DEBUG_WRITE
+#endif
+
+#ifdef DEBUG_EXTEND
+#define PRINT_EXTEND(X) {printf("(inode-extend) "); printf(X);}
+#define PRINT_EXTEND_2(X,Y) {printf("(inode-extend) "); printf(X,Y);}
+#else
+#define PRINT_EXTEND(X) do {} while(0)
+#define PRINT_EXTEND_2(X,Y) do {} while(0)
+#endif
+
+#ifdef DEBUG_CREATE
+#define PRINT_CREATE(X) {printf("(inode-create) "); printf(X);}
+#define PRINT_CREATE_2(X,Y) {printf("(inode-create) "); printf(X,Y);}
+#else
+#define PRINT_CREATE(X) do {} while(0)
+#define PRINT_CREATE_2(X,Y) do {} while(0)
+#endif
+
+
+#ifdef DEBUG_READ
+#define PRINT_READ(X) {printf("(inode-read) "); printf(X);}
+#define PRINT_READ_2(X,Y) {printf("(inode-read) "); printf(X,Y);}
+#else
+#define PRINT_READ(X) do {} while(0)
+#define PRINT_READ_2(X,Y) do {} while(0)
+#endif
+
+#ifdef DEBUG_WRITE
+#define PRINT_WRITE(X) {printf("(inode-write) "); printf(X);}
+#define PRINT_WRITE_2(X,Y) {printf("(inode-write) "); printf(X,Y);}
+#else
+#define PRINT_WRITE(X) do {} while(0)
+#define PRINT_WRITE_2(X,Y) do {} while(0)
+#endif
+
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
 #define N_DIRECT_PTRS 12
 #define N_INDIRECT_PTRS (BLOCK_SECTOR_SIZE/sizeof(block_sector_t))
 #define N_DBL_INDIRECT_PTRS (N_INDIRECT_PTRS * N_INDIRECT_PTRS)
-
 
 
 /* On-disk inode.
@@ -213,7 +254,8 @@ inode_init (void)
 bool
 inode_create (block_sector_t sector, off_t length)
 {
- /* printf("(inode_create) sector: %d, length: %d\n", (int) sector, (int) length);*/
+  PRINT_CREATE_2("sector: %d\n", (int) sector);
+  PRINT_CREATE_2("length: %d\n", (int) length);
 
   ASSERT (length >= 0);
   struct inode_disk *disk_inode = NULL;
@@ -238,7 +280,6 @@ inode_create (block_sector_t sector, off_t length)
   
   bool success = inode_extend(&inode, length);
 
-  /*printf("(inode_create) num_allocated: %d, num_blocks: %d\n", num_allocated, num_blocks);*/
   if (!success)
     inode_free_sectors(disk_inode);
   else
@@ -453,8 +494,10 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       if (chunk_size <= 0)
         break;
 
-      /*printf("inode sector_idx: %d, read_size: %d, offset: %d, chunk_size: %d\n", 
-              (int) sector_idx, (int)size, (int)sector_ofs, chunk_size);*/
+      PRINT_READ_2("sectord_idx: %d\n", (int) sector_idx);
+      PRINT_READ_2("read_size: %d\n", size);
+      PRINT_READ_2("offset: %d\n",sector_ofs);
+      PRINT_READ_2("chunk_size: %d\n", chunk_size);
 
       cache_read(sector_idx, buffer + bytes_read, sector_ofs, 
                   chunk_size, false);
@@ -494,7 +537,6 @@ inode_extend(struct inode *inode, int new_length)
 
   int end_block = length > 0 ? (length-1) / BLOCK_SECTOR_SIZE : 0;
   int end_write_block = (new_length-1) / BLOCK_SECTOR_SIZE;
-  int new_sectors = end_write_block - end_block;
 
   bool success = true;
   int cur_block;
@@ -621,23 +663,26 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 
   while (size > 0) 
   {
-    printf("size: %d\n", size);
     /* Sector to write, starting byte offset within sector. */
     block_sector_t sector_idx = byte_to_sector (inode, offset);
-    /*printf("sector_idx: %d\n", sector_idx);*/
+    PRINT_WRITE_2("sector_idx: %d\n", sector_idx);
     int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
     /* Bytes left in inode, bytes left in sector, lesser of the two. */
     off_t inode_left = inode_length (inode) - offset;
     int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
     int min_left = inode_left < sector_left ? inode_left : sector_left;
+    int chunk_size = size < min_left ? size : min_left;
+
+
+    PRINT_WRITE_2("sector_idx: %d\n", sector_idx);
+    PRINT_WRITE_2("offset: %d\n", sector_ofs);
+    PRINT_WRITE_2("chunk_size: %d\n", chunk_size);
 
     /* Number of bytes to actually write into this sector. */
-    int chunk_size = size < min_left ? size : min_left;
     if (chunk_size <= 0)
       break;
 
-    /*printf("sector:%d , offset: %d, chunk_size: %d \n", sector_idx, sector_ofs, chunk_size);*/
     cache_write (sector_idx, buffer + bytes_written, 
                  sector_ofs, chunk_size, false);
 
@@ -647,7 +692,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
     bytes_written += chunk_size;
   }
 
-  printf("bytes_written: %d\n", bytes_written);
+  PRINT_WRITE_2("bytes_written: %d\n", bytes_written);
 
   return bytes_written;
 }
