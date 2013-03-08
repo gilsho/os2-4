@@ -175,89 +175,102 @@ inode_create (block_sector_t sector, off_t length)
   if (disk_inode != NULL)
     return false;
 
-  size_t sectors = bytes_to_sectors (length);
+  size_t num_sectors = bytes_to_sectors (length);
   disk_inode->length = length;
   disk_inode->magic = INODE_MAGIC;
 
   int remaining_bytes = length;
   int cur_block = 0;
+
   while (remaining_bytes > 0) 
+  {
+    if (cur_block < N_DIRECT_PTRS) 
     {
-        
-      if (cur_block < N_DIRECT_PTRS) 
-        {
-          block_sector_t new_sector;
-          if (!free_map_allocate (1,&new_sector)){
-            success = false;
-            break;
-          }
-          
-          disk_inode->direct[cur_block] = new_sector;
-        }
-        else if (cur_block < (int)(N_INDIRECT_PTRS + N_DIRECT_PTRS))
-        {
-          if(disk_inode->indirect == 0){
-            if(!free_map_allocate(1, &(disk_inode->indirect))) {
-                success = false;
-                break;
-            }
-          }
-
-          block_sector_t new_sector;
-          if(!free_map_allocate(1, &new_sector)){
-            success = false;
-            break;
-          }
-
-          cache_write (disk_inode->indirect, &new_sector, 
-                 (cur_block - N_DIRECT_PTRS) * sizeof(block_sector_t), 
-                 sizeof(block_sector_t), true);
-        }
-
-        else if (cur_block <  (int) (N_DBL_INDIRECT_PTRS + N_INDIRECT_PTRS + N_DIRECT_PTRS))
-        {
-
-          if(disk_inode->dbl_indirect == 0){
-            if(!free_map_allocate(1, &(disk_inode->dbl_indirect))) {
-                success = false;
-                break;
-            }
-          }
-
-          int dbl_indirect_idx = (cur_block - N_DIRECT_PTRS - N_INDIRECT_PTRS) / N_INDIRECT_PTRS;
-          int indirect_idx = (cur_block - N_DIRECT_PTRS - N_INDIRECT_PTRS) % N_INDIRECT_PTRS;
-          block_sector_t indirect_sector;
-          if(indirect_idx == 0){
-            if(!free_map_allocate(1, &indirect_sector)){
-              success = false;
-              break;
-            }
-            cache_write(disk_inode->dbl_indirect, &indirect_sector, 
-              dbl_indirect_idx * sizeof(block_sector_t),
-              sizeof(block_sector_t), true);
-          }else{
-            cache_read(disk_inode->dbl_indirect, &indirect_sector, 
-              dbl_indirect_idx * sizeof(block_sector_t),
-              sizeof(block_sector_t), true);
-          }
-
-          block_sector_t new_sector;
-          
-          if(!free_map_allocate(1, &new_sector)){
-            success = false;
-            break;
-          }
-          cache_write(indirect_sector, &new_sector, 
-              indirect_idx * sizeof(block_sector_t),
-              sizeof(block_sector_t), true);
-
-        }
-
-
-
-        cur_block++;
-        remaining_bytes -= BLOCK_SECTOR_SIZE;
+      block_sector_t new_sector;
+      if (!free_map_allocate (1,&new_sector)){
+        success = false;
+        break;
       }
+      disk_inode->direct[cur_block] = new_sector;
+    }
+
+    else if (cur_block < (int)(N_INDIRECT_PTRS + N_DIRECT_PTRS))
+    {
+      if (disk_inode->indirect == 0)
+      {
+        if (!free_map_allocate(1, &(disk_inode->indirect))) {
+          success = false;
+          break;
+        }
+      }
+
+      block_sector_t new_sector;
+      if (!free_map_allocate(1, &new_sector)) {
+        success = false;
+        break;
+      }
+
+      off_t sector_ofs = (cur_block - N_DIRECT_PTRS) * sizeof(block_sector_t);
+      cache_write (disk_inode->indirect, &new_sector, 
+                   sector_ofs, sizeof(block_sector_t), true);
+    }
+
+    else if (cur_block <  (int) (N_DBL_INDIRECT_PTRS + N_INDIRECT_PTRS + N_DIRECT_PTRS))
+    {
+      /* allocate dbl_indirect sector if necessary */
+      if (disk_inode->dbl_indirect == 0)
+      {
+        if(!free_map_allocate(1, &(disk_inode->dbl_indirect))) {
+          success = false;
+          break;
+        }
+      }
+
+      int dbl_indirect_idx = (cur_block - N_DIRECT_PTRS - N_INDIRECT_PTRS) / N_INDIRECT_PTRS;
+      int indirect_idx = (cur_block - N_DIRECT_PTRS - N_INDIRECT_PTRS) % N_INDIRECT_PTRS;
+      block_sector_t indirect_sector;
+
+      /* allocate indirect sector if necessary */
+      if (indirect_idx == 0)
+      {
+        if (!free_map_allocate(1, &indirect_sector)) {
+          success = false;
+          break;
+        }
+
+        /* store the indirect sector in the dbl indirect  table */
+        off_t sector_ofs = dbl_indirect_idx * sizeof(block_sector_t);
+        cache_write(disk_inode->dbl_indirect, &indirect_sector, 
+                    sector_ofs, sizeof(block_sector_t), true);
+      } 
+      else 
+      {
+        off_t sector_ofs = dbl_indirect_idx * sizeof(block_sector_t);
+        cache_read(disk_inode->dbl_indirect, &indirect_sector, 
+                   sector_ofs, sizeof(block_sector_t), true);
+      }
+
+      block_sector_t new_sector;
+      if (!free_map_allocate(1, &new_sector)) {
+        success = false;
+        break;
+      }
+
+      /* store the data sector in the indirect table */
+      off_t sector_ofs = indirect_idx * sizeof(block_sector_t);
+      cache_write(indirect_sector, &new_sector, 
+                  sector_ofs, sizeof(block_sector_t), true);
+
+      /* zero-out the new data sector */
+      int valid_bytes = remaining_bytes < BLOCK_SECTOR_SIZE ? remaining_bytes : BLOCK_SECTOR_SIZE;
+      char zeros[valid_bytes] = 0;
+      cache_write(new_sector, zeros, 0, (off_t) valid_bytes, false);
+    }
+    else { success = false; }
+
+    cur_block++;
+    remaining_bytes -= BLOCK_SECTOR_SIZE;
+  }
       /* Finds contiguous region on disk. not needed anymore
       if (free_map_allocate (sectors, &disk_inode->start)) 
         {
@@ -272,16 +285,89 @@ inode_create (block_sector_t sector, off_t length)
             }
           success = true; 
         } */
-      if(!success){
-        /* CLEAN UP INODE */
-      }else{
-        /* WRITE INODE TO DISK */
-      }
 
-      free (disk_inode);
+  if (!success)
+  {
+    /* cleanup disk_inode */
+    inode_free_sectors(disk_inode);
+  } 
+  else
+  {
+    cache_write(sector, disk_inode, 0, sizeof(struct inode_disk), true);
+  }
+  free (disk_inode);
     
   return success;
 }
+
+
+void
+inode_free_sectors(struct inode_disk *disk_inode)
+{
+  size_t num_sectors = bytes_to_sectors (disk_inode->length);
+
+  /* clean up direct data sectors */
+  int i;
+  for (i = 0; i < N_DIRECT_PTRS; i++)
+  {
+    if (disk_inode->direct[i] != NULL)
+    {
+      free_map_release (disk_inode->direct[i], 1);
+      disk_inode->direct[i] = NULL;
+    }
+  }
+
+  /* clean up indirect sectors, meta & data */
+  if (disk_inode->indirect != NULL)
+  {
+    int i;
+    for (i = 0; i < N_INDIRECT_PTRS; i++)
+    {
+      block_sector_t data_sector;
+      off_t sector_ofs = i * sizeof(block_sector_t);
+      cache_read(disk_node->indirect, &data_sector, 
+                 sector_ofs, sizeof(block_sector_t),true);
+
+      if (data_sector != NULL)
+      {
+        free_map_release (disk_inode->direct[i], 1);
+        /* TODO: clear the indirect entry? */
+      }
+      else
+        break;
+    }
+    /* free indirect table sector */
+    free_map_release (disk_inode->indirect, 1);
+  }
+
+  /* clean up dbl indirect sectors, meta & data */
+  if (disk_inode->dbl_indirect != NULL)
+  {
+    int i;
+    for (i = 0; i < N_INDIRECT_PTRS; i++)
+    {
+      block_sector_t indirect_sector;
+      off_t sector_ofs = i * sizeof(block_sector_t);
+      cache_read(disk_node->dbl_indirect, &indirect_sector, 
+                 sector_ofs, sizeof(block_sector_t), true);
+
+      if (indirect_sector != NULL)
+      {
+        for (j = 0; j < N_INDIRECT_PTRS; j++)
+        {
+
+        }
+        
+        
+      }
+
+
+    }
+    /* free dbl indirect table sector */
+    free_map_release (disk_inode->dbl_indirect, 1);
+  }
+}
+
 
 /* Reads an inode from SECTOR
    and returns a `struct inode' that contains it.
