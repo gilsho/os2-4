@@ -2,6 +2,9 @@
 #include <debug.h>
 #include "filesys/inode.h"
 #include "threads/malloc.h"
+#include <string.h>
+#include <stdio.h>
+
 
 /* An open file. */
 struct file 
@@ -94,6 +97,7 @@ file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs)
 off_t
 file_write (struct file *file, const void *buffer, off_t size) 
 {
+
   off_t bytes_written = inode_write_at (file->inode, buffer, size, file->pos);
   file->pos += bytes_written;
   return bytes_written;
@@ -110,6 +114,8 @@ off_t
 file_write_at (struct file *file, const void *buffer, off_t size,
                off_t file_ofs) 
 {
+/*  printf("in file_write_at: %p, size: %d, ofs: %d\n", file, size, file_ofs);*/
+
   return inode_write_at (file->inode, buffer, size, file_ofs);
 }
 

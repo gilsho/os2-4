@@ -141,7 +141,7 @@ byte_to_sector (const struct inode *inode, off_t pos)
     int index = trunc_block_num / N_INDIRECT_PTRS;
     block_sector_t indirect_table = inode_get_sector_table_entry(dbl_indirect_table,index);
 
-    index = trunc_block_num & N_INDIRECT_PTRS;
+    index = trunc_block_num % N_INDIRECT_PTRS;
     return inode_get_sector_table_entry(indirect_table,index);
   } 
 
@@ -282,7 +282,7 @@ inode_create (block_sector_t sector, off_t length)
     cur_block++;
     remaining_bytes -= BLOCK_SECTOR_SIZE;
   }*/
-  printf("(inode_create) num_allocated: %d, num_blocks: %d\n", num_allocated, num_blocks);
+  /*printf("(inode_create) num_allocated: %d, num_blocks: %d\n", num_allocated, num_blocks);*/
   if (num_allocated != num_blocks)
   {
     success = false;
@@ -526,8 +526,8 @@ inode_grow_file(struct inode_disk *d_inode, int num)
   if(d_inode->length % BLOCK_SECTOR_SIZE > 0)
     start_block++;
 
- printf("(inode_grow) d_inode->length: %d, start_block: %d, end_block: %d\n", 
-          d_inode->length, start_block, start_block+num);
+ /*printf("(inode_grow) d_inode->length: %d, start_block: %d, end_block: %d\n", 
+          d_inode->length, start_block, start_block+num);*/
 
   int cur_block;
   int num_allocated = 0;
@@ -598,7 +598,7 @@ inode_grow_file(struct inode_disk *d_inode, int num)
       if (!free_map_allocate(1, &new_sector)) {
         break;
       }
-
+      /*printf("allocating data block: %d sec: %d\n", num_allocated, new_sector);*/
       /* store the data sector in the indirect table */
       off_t sector_ofs = indirect_idx * sizeof(block_sector_t);
       cache_write(indirect_sector, &new_sector, 
@@ -612,6 +612,17 @@ inode_grow_file(struct inode_disk *d_inode, int num)
 
     num_allocated++;
   }
+
+  /*block_sector_t temp;
+  cache_read(d_inode->dbl_indirect, &temp, 0, sizeof(block_sector_t), true);
+
+  block_sector_t temp2;
+  cache_read(temp, &temp2, 0, sizeof(block_sector_t), true);
+  printf("%d\n", temp2);
+
+  block_sector_t temp3;
+  cache_read(temp, &temp3, sizeof(block_sector_t), sizeof(block_sector_t), true);
+  printf("%d\n", temp3);*/
 
   return num_allocated;
 }
@@ -642,7 +653,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 
     int num_allocated = inode_grow_file(d_inode, end_write_block - num_sectors);
 
-    ASSERT(num_allocated == (end_write_block - num_sectors));
+    /*ASSERT(num_allocated == (end_write_block - num_sectors));*/
   }
   /*printf("Total to write: %d on: %d\n", size, inode->sector);*/
 
@@ -650,6 +661,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
     {
       /* Sector to write, starting byte offset within sector. */
       block_sector_t sector_idx = byte_to_sector (inode, offset);
+      /*printf("sector_idx: %d\n", sector_idx);*/
       int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
       /* Bytes left in inode, bytes left in sector, lesser of the two. */
