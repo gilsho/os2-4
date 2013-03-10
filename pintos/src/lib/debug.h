@@ -23,7 +23,6 @@ void debug_backtrace_all (void);
 #define DEBUG_FILESYS	(1 << 3)
 
 #define DEBUG 0
-/*#define DEBUG (DEBUG_INODE)*/
 
 #endif
 
