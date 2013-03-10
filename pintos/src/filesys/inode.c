@@ -86,9 +86,10 @@ struct inode_disk
     block_sector_t direct[N_DIRECT_PTRS];  /* first-order data sector. */
     block_sector_t indirect;
     block_sector_t dbl_indirect;
-    off_t length;                                 /* File size in bytes. */
-    unsigned magic;                               /* Magic number. */
-    uint32_t unused[112];                         /* Not used. */
+    off_t length;                          /* File size in bytes. */
+    bool is_dir;                           /* True if inode is a director*/
+    unsigned magic;                        /* Magic number. */
+    uint32_t unused[112];                  /* Not used. */
   };
 
 /* Returns the block number that contains the byte offset of a file */

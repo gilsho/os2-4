@@ -491,6 +491,10 @@ bool sys_chdir(int *stack, uint32_t *eax)
 {
 	valid_str;
 	char *dir = pop_arg(&stack);
+
+	
+
+
 	int success = (int) process_chdir(dir);
 	memcpy(eax, &success, sizeof(uint32_t));
 	return true;

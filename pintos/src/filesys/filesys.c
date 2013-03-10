@@ -47,6 +47,7 @@ filesys_done (void)
 bool
 filesys_create (const char *name, off_t initial_size) 
 {
+  /* TODO: CHECK REMOVED FLAG */
   block_sector_t inode_sector = 0;
   struct dir *dir = dir_open_root ();
   bool success = (dir != NULL
@@ -68,30 +69,62 @@ filesys_create (const char *name, off_t initial_size)
 struct file *
 filesys_open (struct dir *start_dir, const char *path)
 {          
-  struct dir *dir = dir_open_root ();
-  struct inode *inode = NULL;
+  /* TODO: CHECK REMOVED FLAG */
+  struct inode *inode = filesys_open_path(start_dir, path);
+  struct file *f = file_open(inode);
 
-
-  if (dir != NULL)
-    dir_lookup (dir, name, &inode);
-  dir_close (dir);
+  /* IS WRITING TO DIR FILES ALLOWED? */
 
   return file_open (inode);
 }
 
-/* Deletes the file named NAME.
+/* Deletes the file at PATH.
    Returns true if successful, false on failure.
-   Fails if no file named NAME exists,
+   Fails if no file at PATH exists,
    or if an internal memory allocation fails. */
 bool
-filesys_remove (const char *name) 
+filesys_remove (struct dir *start_dir, const char *path) 
 {
-  struct dir *dir = dir_open_root ();
-  bool success = dir != NULL && dir_remove (dir, name);
-  dir_close (dir); 
+
+  struct inode *inode = filesys_open_path(start_dir, path);
+
+  if (inode == NULL)
+    return false;
+
+  if (inode_isdir(inode) && !dir_is_empty(inode)) {
+    /* something special here */
+    /* search file for used entries */
+    inode_close(inode);
+    return false;
+  }
+  else {
+ 
+    char *name = strrchr (path, (int) '/');
+    int path_len = name-path;
+    if (path_len >= PGSIZE) {
+      inode_close(inode);
+      return false;
+    }
+
+    char *name_cpy = malloc(strnlen(name, PGSIZE));
+    if (name_cpy == NULL)
+      PANIC("ASSERT BAD");
+    strlcpy(name_cpy, name, PGSIZE);
+
+    char *dir_path = malloc(path_len);
+    strlcpy(dir_path, path, path_len);
+
+    struct dir *parent_dir = filesys_open_dir(start_dir, dir_path);
+    ASSERT(parent_dir != NULL);
+
+    /* TODO: CHECK FOR ROOT? */
+    success = dir_remove(parent_dir, name);
+    dir_close (parent_dir); 
+  } 
 
   return success;
 }
+
 
 /* Formats the file system. */
 static void
@@ -109,39 +142,52 @@ do_format (void)
 struct dir *
 filesys_open_dir(struct dir *start_dir, const char *path)
 {
-  /* tokenize */
-  size_t len = strnlen (path,PGSIZE);
-  char *pathcpy = malloc(len);
-  if (pathcpy == NULL)
-    return false;
-  memcpy(pathcpy,path,len);
-
-  struct inode *inode;
-  char *token, *save_ptr;
-  struct dir *cur_dir = start_dir;
-  bool success = true;
-  for (token = strtok_r (pathcpy, " ", &save_ptr); token != NULL;
-     token = strtok_r (NULL, " ", &save_ptr)) {
-
-    if (!dir_lookup(cur_dir,token,&inode)) {
-      success = false;
-      break;
-    }
-
-    if (inode_isdir(inode))
-
-    
-  }
-
+  struct inode *inode = filesys_open_path(start_dir, path);
+  return dir_open(inode);
 }
 
-
+/* Returns an open inode for the child file/dir PATH
+   of START_DIR */
 struct *inode 
 filesys_open_path(struct dir *start_dir, char *path) 
 {
+  /* copy the path arg string */
+  size_t len = strnlen (path,PGSIZE);
+  char *pathcpy = malloc(len);
+  if (pathcpy == NULL)
+    return NULL;
+  memcpy(pathcpy,path,len);
 
+  /* tokenize */
+  struct inode *inode;
+  char *token, *next_token, *save_ptr;
+  struct dir *cur_dir = dir_reopen (start_dir);
+
+  token = strtok_r (pathcpy, "/", &save_ptr);
+  while ( token != NULL )
+  {
+    bool found = dir_lookup(cur_dir,token,&inode);
+
+    /* entry not found in current directory */
+    if (!found) {
+      dir_close(cur_dir);
+      break;
+    }
+
+    next_token = strtok_r (NULL, "/", &save_ptr);
+
+    /* check if reached end of path */
+    if (next_token == NULL)
+      break;
+
+    dir_close(cur_dir);
+    cur_dir = dir_open(inode);
+
+    /* check if trying to descend into a file */
+    if (cur_dir == NULL)
+      return NULL;
+    
+    token = next_token;
+  }
+  return inode;
 }
-
-
-
-
