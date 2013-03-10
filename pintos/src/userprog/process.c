@@ -46,6 +46,8 @@ struct process_info
                                 write access to the file while the process is 
                                 running  */ 
   int next_fd;              /* fd counter localized to this process only */
+
+  struct dir *wdir;
 };
 
 
@@ -75,6 +77,18 @@ struct file_desc
 };
 
 
+#if (DEBUG & DEBUG_PROCESS)
+#define DEBUG_PROCESS_CHDIR      1
+#endif
+
+#if DEBUG_CHDIR
+#define PRINT_PROCESS_CHDIR(X) {printf("(process_chdir) "); printf(X);}
+#define PRINT_PROCESS_CHDIR_2(X,Y) {printf("(process_chdir) "); printf(X,Y);}
+#else
+#define PRINT_PROCESS_CHDIR(X) do {} while(0)
+#define PRINT_PROCESS_CHDIR_2(X,Y) do {} while(0)
+#endif
+
 
 /* skip STDIN(0) and STDOUT(1) */
 #define FILE_DESCRIPTOR_START 2
@@ -92,7 +106,7 @@ void process_foreach (struct list *list, process_action_func *func, void *aux);
 void set_parent_dead(struct process_info *info, void* aux UNUSED);
 struct process_info * process_get_info(struct process_info *parent_info, pid_t child_pid);
 void process_free_children (struct process_info* info); 
-bool initialize_process_info(struct process_info **child_info_ptr);
+bool initialize_process_info(struct process_info **child_info_ptr, struct process_info *parent_info);
 void process_set_init_data(struct process_init_data *init_data, char *args_copy);
 void close_open_files(struct process_info *info);
 void release_children_locks(struct process_info *info, void* aux UNUSED);
@@ -103,7 +117,7 @@ void release_children_locks(struct process_info *info, void* aux UNUSED);
 void process_init(void)
 {
   struct process_info *main_info;  
-  bool result = initialize_process_info(&main_info);
+  bool result = initialize_process_info(&main_info,NULL);
   
   ASSERT(result);
   ASSERT(main_info != NULL);
@@ -154,8 +168,9 @@ process_execute (const char *args)
   process_set_init_data(&init_data, args_copy);
   
   /* initialize the child process' info struct */
+  struct process_info *parent_info = thread_current()->process_info;
   struct process_info *child_info;
-  if (!initialize_process_info(&child_info))
+  if (!initialize_process_info(&child_info,parent_info))
     return -1;
 
   init_data.info = child_info;
@@ -878,7 +893,7 @@ process_free_children (struct process_info* parent_info)
 
 /* Initialize the process info struct for a new process. */
 bool
-initialize_process_info(struct process_info **child_info_ptr)
+initialize_process_info(struct process_info **child_info_ptr, struct process_info *parent_info)
 {
   struct process_info *child_info = *child_info_ptr;
   
@@ -900,6 +915,12 @@ initialize_process_info(struct process_info **child_info_ptr)
   child_info->next_fd = FILE_DESCRIPTOR_START;
   child_info->exec_file = NULL;
   child_info->pid = -1;
+
+  if (parent_info == NULL)
+    child_info->wdir = dir_open_root ();
+  else
+    child_info->wdir = dir_reopen (parent_info->wdir);
+
   
   *child_info_ptr = child_info;
   return true;
@@ -960,3 +981,33 @@ process_remove_file_desc(int fd)
     }
   }
 }
+
+
+bool process_chdir(const char *path)
+{
+  struct process_info *pinfo = thread_current()->process_info;
+  struct dir *start_dir;
+  /* assume no spaces before absolute paths */
+  if (pathcpy[0] == '/') {
+    start_dir = dir_open_root();
+  } else {
+    start_dir = pinfo->wdir;
+  }
+
+  bool success;
+  struct dir *new_wdir = filesys_open_dir(start_dir,pathcpy);
+  if (new_wdir != NULL) {
+    filesys_close_dir(pinfo->wdir);
+    pinfo->wdir = new_wdir;
+    success = true;
+  else {
+    success = false;
+  }
+  
+  free(pathcpy);
+  return success;
+
+}
+
+
+

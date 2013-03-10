@@ -36,6 +36,11 @@ bool sys_write(int *stack, uint32_t *eax);
 bool sys_seek(int *stack);
 bool sys_tell(int *stack, uint32_t *eax);
 bool sys_close(int *stack);
+bool sys_chdir(int *stack, uint32_t *eax);
+bool sys_mkdir(int *stack, uint32_t *eax);
+bool sys_readdir(int *stack, uint32_t *eax);
+bool sys_isdir(int *stack, uint32_t *eax);
+bool sys_inumber(int *stack, uint32_t *eax);
 
 
 
@@ -96,17 +101,22 @@ syscall_handler (struct intr_frame *f)
     case SYS_CLOSE:                  
 			success = sys_close(ustack);
 			break; 
+		case SYS_CHDIR:
+			success = sys_chdir(ustack,ueax);
+			break;
+		case SYS_MKDIR:
+			success = sys_mkdir(ustack,ueax);
+			break;
+		case SYS_READDIR:
+			success = sys_readdir(ustack,ueax);
+			break;
+		case SYS_ISDIR:
+			success = sys_isdir(ustack,ueax);
+			break;
+		case SYS_INUMBER:
+			success = sys_inumber(ustack,ueax);
+			break;
 
-    /* Project 3 and optionally project 4. */
-    	case SYS_MMAP:                 /* Map a file into memory. */
-    	case SYS_MUNMAP:               /* Remove a memory mapping. */
-
-    /* Project 4 only. */
-    	case SYS_CHDIR:                /* Change the current directory. */
-    	case SYS_MKDIR:                /* Create a directory. */
-    	case SYS_READDIR:              /* Reads a directory entry. */
-    	case SYS_ISDIR:                /* Tests if a fd represents a directory. */
-    	case SYS_INUMBER:              /* Returns the inode number for a fd. */
 		default:
 			success = false;
 			printf("unrecognized system call\n");
@@ -476,4 +486,37 @@ bool sys_close(int *stack)
 	
 	return true;	
 }
+
+bool sys_chdir(int *stack, uint32_t *eax)
+{
+	valid_str;
+	char *dir = pop_arg(&stack);
+	int success = (int) process_chdir(dir);
+	memcpy(eax, &success, sizeof(uint32_t));
+	return true;
+}
+
+bool sys_mkdir(int *stack, uint32_t *eax)
+{
+	char *dir = pop_arg(&stack);
+}
+
+bool sys_readdir(int *stack, uint32_t *eax)
+{
+	int fd = pop_arg(&stack);
+	char *name = pop_arg(&stack);
+}
+
+bool sys_isdir(int *stack, uint32_t *eax)
+{
+	int fd = pop_arg(&stack);	
+}
+
+bool sys_inumber(int *stack, uint32_t *eax)
+{
+	int fd = pop_arg(&stack);
+}
+
+
+
 
