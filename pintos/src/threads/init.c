@@ -128,6 +128,7 @@ main (void)
   locate_block_devices ();
   cache_init();
   filesys_init (format_filesys);
+  thread_current()->wdir = dir_open_root();
 #endif
 
   printf ("Boot complete.\n");

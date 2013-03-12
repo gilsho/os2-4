@@ -7,6 +7,7 @@
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "filesys/inode.h"
 #include "threads/malloc.h"
 #include "threads/palloc.h"
 #include "threads/vaddr.h"
@@ -38,7 +39,11 @@ fsutil_cat (char **argv)
   char *buffer;
 
   printf ("Printing '%s' to the console...\n", file_name);
-  file = filesys_open (file_name);
+  struct dir *root = dir_open_root();
+  if (root == NULL)
+    PANIC("cannot open root dir\n");
+
+  file = filesys_open (root, file_name);
   if (file == NULL)
     PANIC ("%s: open failed", file_name);
   buffer = palloc_get_page (PAL_ASSERT);
@@ -60,9 +65,12 @@ void
 fsutil_rm (char **argv) 
 {
   const char *file_name = argv[1];
-  
+  struct dir *root = dir_open_root();
+  if (root != NULL)
+    PANIC("cannot open root dir\n");
+
   printf ("Deleting '%s'...\n", file_name);
-  if (!filesys_remove (file_name))
+  if (!filesys_remove (root, file_name))
     PANIC ("%s: delete failed\n", file_name);
 }
 
@@ -89,6 +97,10 @@ fsutil_extract (char **argv UNUSED)
 
   printf ("Extracting ustar archive from scratch device "
           "into file system...\n");
+
+  struct dir *root = dir_open_root();
+  if (root == NULL)
+    PANIC("cannot open root dir\n");
 
   for (;;)
     {
@@ -119,7 +131,8 @@ fsutil_extract (char **argv UNUSED)
           /* Create destination file. */
           if (!filesys_create (file_name, size))
             PANIC ("%s: create failed", file_name);
-          dst = filesys_open (file_name);
+
+          dst = filesys_open (root, file_name);
           if (dst == NULL)
             PANIC ("%s: open failed", file_name);
 
@@ -180,8 +193,12 @@ fsutil_append (char **argv)
   if (buffer == NULL)
     PANIC ("couldn't allocate buffer");
 
+  struct dir *root = dir_open_root();
+  if (root == NULL)
+    PANIC("cannot open root dir\n");
+
   /* Open source file. */
-  src = filesys_open (file_name);
+  src = filesys_open (root, file_name);
   if (src == NULL)
     PANIC ("%s: open failed", file_name);
   size = file_length (src);

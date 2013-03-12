@@ -46,8 +46,6 @@ struct process_info
                                 write access to the file while the process is 
                                 running  */ 
   int next_fd;              /* fd counter localized to this process only */
-
-  struct dir *wdir;
 };
 
 
@@ -79,6 +77,7 @@ struct file_desc
 
 #if (DEBUG & DEBUG_PROCESS)
 #define DEBUG_PROCESS_CHDIR      1
+#define DEBUG_PROCESS_START      1
 #endif
 
 #if DEBUG_CHDIR
@@ -87,6 +86,14 @@ struct file_desc
 #else
 #define PRINT_PROCESS_CHDIR(X) do {} while(0)
 #define PRINT_PROCESS_CHDIR_2(X,Y) do {} while(0)
+#endif
+
+#if DEBUG_START
+#define PRINT_PROCESS_START(X) {printf("(process_start) "); printf(X);}
+#define PRINT_PROCESS_START_2(X,Y) {printf("(process_start) "); printf(X,Y);}
+#else
+#define PRINT_PROCESS_START(X) do {} while(0)
+#define PRINT_PROCESS_START_2(X,Y) do {} while(0)
 #endif
 
 
@@ -111,6 +118,7 @@ void process_set_init_data(struct process_init_data *init_data, char *args_copy)
 void close_open_files(struct process_info *info);
 void release_children_locks(struct process_info *info, void* aux UNUSED);
 
+bool process_chdir(const char *path);
 
 /* Initializes the process control block.
   Sets process info for the main thread */
@@ -566,7 +574,10 @@ load (const char *args, void (**eip) (void), void **esp, struct file **file)
 
   lock_acquire(&lock_filesys);
 
-  (*file) = filesys_open (file_name);
+  struct dir *wdir = process_get_wdir();
+  PRINT_PROCESS_START_2("wdir->inode->sector: \n", dir_get_sector(wdir));
+
+  (*file) = filesys_open (wdir, file_name);
   if (*file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
@@ -893,7 +904,8 @@ process_free_children (struct process_info* parent_info)
 
 /* Initialize the process info struct for a new process. */
 bool
-initialize_process_info(struct process_info **child_info_ptr, struct process_info *parent_info)
+initialize_process_info(struct process_info **child_info_ptr, 
+                        struct process_info *parent_info)
 {
   struct process_info *child_info = *child_info_ptr;
   
@@ -916,12 +928,6 @@ initialize_process_info(struct process_info **child_info_ptr, struct process_inf
   child_info->exec_file = NULL;
   child_info->pid = -1;
 
-  if (parent_info == NULL)
-    child_info->wdir = dir_open_root ();
-  else
-    child_info->wdir = dir_reopen (parent_info->wdir);
-
-  
   *child_info_ptr = child_info;
   return true;
 }
@@ -985,32 +991,40 @@ process_remove_file_desc(int fd)
 
 bool process_chdir(const char *path)
 {
-  struct process_info *pinfo = thread_current()->process_info;
+  struct thread *t = thread_current();
+  struct dir *old_wdir = t->wdir;
   struct dir *start_dir;
   /* assume no spaces before absolute paths */
-  if (pathcpy[0] == '/') {
+  if (path[0] == '/') {
     start_dir = dir_open_root();
   } else {
-    start_dir = dir_reopen(pinfo->wdir);
+    start_dir = dir_reopen(t->wdir);
   }
 
   bool success;
-  struct dir *new_wdir = filesys_open_dir(start_dir,pathcpy);
+  struct dir *new_wdir = filesys_open_dir(start_dir,path);
   if (new_wdir != NULL) {
-    filesys_close_dir(pinfo->wdir);
-    pinfo->wdir = new_wdir;
+    dir_close(t->wdir);
+    t->wdir = new_wdir;
     success = true;
-  else {
+  } else {
     success = false;
   }
   
   /* need to close what you have opened */
   dir_close(start_dir);
 
-  free(pathcpy);
   return success;
-
 }
 
+struct dir* 
+process_get_wdir(void)
+{
+  return thread_current()->wdir;
+}
 
-
+void 
+process_set_wdir(struct dir *wdir)
+{
+  thread_current()->wdir = wdir;
+}

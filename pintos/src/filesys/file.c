@@ -6,8 +6,8 @@
 #include <stdio.h>
 
 #if (DEBUG & DEBUG_FILE)
-#define DEBUG_FILE_WRITE      1
-#define DEBUG_FILE_WRITE_AT   1
+#define DEBUG_FILE_WRITE      0
+#define DEBUG_FILE_WRITE_AT   0
 #endif
 
 #if DEBUG_FILE_WRITE

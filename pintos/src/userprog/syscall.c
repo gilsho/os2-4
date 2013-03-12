@@ -283,7 +283,7 @@ bool sys_remove(int *stack, uint32_t *eax)
    
   int result;
   lock_acquire(&lock_filesys);
-  result = (int)filesys_remove (file_name);
+  result = (int)filesys_remove (process_get_wdir(), file_name);
   lock_release(&lock_filesys);
   
   /* push syscall result to the user program */
@@ -303,7 +303,7 @@ bool sys_open(int *stack, uint32_t *eax)
 	struct file *f;
 	
 	lock_acquire(&lock_filesys);
-	f = filesys_open (name);
+	f = filesys_open (process_get_wdir(), name);
 	lock_release(&lock_filesys);
 	
 	/* add a new file descriptor to the thread's fd list */

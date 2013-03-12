@@ -18,7 +18,7 @@
 #define DEBUG_READ          0
 #define DEBUG_WRITE         0
 #define DEBUG_FREE_MAP      0
-#define DEBUG_FREE_SECTOR   1
+#define DEBUG_FREE_SECTOR   0
 #endif
 
 #if DEBUG_EXTEND
@@ -37,6 +37,13 @@
 #define PRINT_CREATE_2(X,Y) do {} while(0)
 #endif
 
+#if DEBUG_OPEN
+#define PRINT_OPEN(X) {printf("(inode-open) "); printf(X);}
+#define PRINT_OPEN_2(X,Y) {printf("(inode-open) "); printf(X,Y);}
+#else
+#define PRINT_OPEN(X) do {} while(0)
+#define PRINT_OPEN_2(X,Y) do {} while(0)
+#endif
 
 #if DEBUG_READ
 #define PRINT_READ(X) {printf("(inode-read) "); printf(X);}
@@ -89,7 +96,7 @@ struct inode_disk
     off_t length;                          /* File size in bytes. */
     bool is_dir;                           /* True if inode is a director*/
     unsigned magic;                        /* Magic number. */
-    uint32_t unused[112];                  /* Not used. */
+    uint32_t unused[111];                  /* Not used. */
   };
 
 /* Returns the block number that contains the byte offset of a file */
@@ -124,6 +131,7 @@ block_sector_t inode_get_sector_table_entry(block_sector_t sector_table, int ind
 void inode_set_sector_table_entry(block_sector_t sector_table, int index, block_sector_t sector_entry);
 bool inode_extend(struct inode *inode, int new_length);
 void inode_zero_sector(block_sector_t sector, bool meta);
+
 
 
 off_t 
@@ -264,6 +272,7 @@ static struct list open_inodes;
 void
 inode_init (void) 
 {
+  PRINT_OPEN("inode_init()\n");
   list_init (&open_inodes);
 }
 
@@ -402,11 +411,16 @@ inode_open (block_sector_t sector)
   struct list_elem *e;
   struct inode *inode;
 
+  PRINT_OPEN_2("sector: %d\n", sector);
+
   /* Check whether this inode is already open. */
   for (e = list_begin (&open_inodes); e != list_end (&open_inodes);
        e = list_next (e)) 
     {
       inode = list_entry (e, struct inode, elem);
+
+      PRINT_OPEN_2("inode: %p\n", inode);
+      PRINT_OPEN_2("inode_sector: %d\n", inode->sector);
       if (inode->sector == sector) 
         {
           inode_reopen (inode);
@@ -543,7 +557,7 @@ inode_extend(struct inode *inode, int new_length)
     return true;
 
 
-  int end_block = (length == 0) ? -1 : byte_to_block(length);
+  int end_block = (length == 0) ? -1 : (int) byte_to_block(length);
   int end_write_block = byte_to_block(new_length);
 
   bool success = true;
@@ -693,8 +707,8 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
   {
     /* Sector to write, starting byte offset within sector. */
     block_sector_t sector_idx = byte_to_sector (inode, offset);
-    PRINT_WRITE_2(sector_idx,"offset: %d\n", offset);
-    PRINT_WRITE_2(sector_idx,"block num: %d\n", byte_to_block(offset));
+    PRINT_WRITE_2(sector_idx,"offset: %d\n", (int) offset);
+    PRINT_WRITE_2(sector_idx,"block num: %d\n", (int) byte_to_block(offset));
 
     int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
@@ -755,4 +769,21 @@ inode_allow_write (struct inode *inode)
   inode->deny_write_cnt--;
 }
 
+bool
+inode_isdir(struct inode *inode)
+{
+  if (inode->sector == ROOT_DIR_SECTOR)
+    return true;
 
+  printf("(inode-isdir) inode->sector: %d", (int) inode->sector);
+  bool isdir;
+  off_t sector_ofs = offsetof(struct inode_disk, is_dir);
+  cache_read(inode->sector, &isdir, sector_ofs, sizeof(bool),true); 
+  return isdir; 
+}
+
+block_sector_t
+inode_get_sector(struct inode *inode)
+{
+  return inode->sector;
+}

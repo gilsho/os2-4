@@ -22,8 +22,10 @@ void debug_backtrace_all (void);
 #define DEBUG_FILE		(1 << 2)
 #define DEBUG_FILESYS	(1 << 3)
 #define DEBUG_PROCESS (1 << 4)
+#define DEBUG_DIR			(1 << 5)
 
 #define DEBUG 0
+/*#define DEBUG DEBUG_DIR | DEBUG_PROCESS*/
 
 #endif
 
