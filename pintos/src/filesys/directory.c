@@ -19,7 +19,6 @@ struct dir_entry
     block_sector_t inode_sector;        /* Sector number of header. */
     char name[NAME_MAX + 1];            /* Null terminated file name. */
     bool in_use;                        /* In use or free? */
-    bool is_directory;
   };
 
 /* Creates a directory with space for ENTRY_CNT entries in the
@@ -113,26 +112,65 @@ lookup (const struct dir *dir, const char *name,
   return false;
 }
 
-/* Searches DIR for a file with the given NAME
+/* Searches DIR for a specific PATH
    and returns true if one exists, false otherwise.
    On success, sets *INODE to an inode for the file, otherwise to
    a null pointer.  The caller must close *INODE. */
 bool
-dir_lookup (const struct dir *dir, const char *name,
+dir_lookup (const struct dir *dir, const char *path,
             struct inode **inode) 
 {
   struct dir_entry e;
 
   ASSERT (dir != NULL);
-  ASSERT (name != NULL);
+  ASSERT (path != NULL);
 
-  if (lookup (dir, name, &e, NULL))
-    *inode = inode_open (e.inode_sector);
-  else
-    *inode = NULL;
+  struct dir *cur_dir = dir_reopen (start_dir);
 
-  return *inode != NULL;
+  /* copy the path arg string */
+  size_t len = strnlen (path,PGSIZE);
+  char *pathcpy = malloc(len);
+  if (pathcpy == NULL)
+    return false;
+  memcpy(pathcpy,path,len);
+
+  char *token, *next_token, *save_ptr;
+  struct inode *cur_inode = cur_dir->inode;
+
+  token = strtok_r (pathcpy, "/", &save_ptr);
+
+  while (token != NULL) {
+    
+    if(lookup (cur_dir, token, &e, NULL)) {
+      cur_inode = inode_open (e.inode_sector);
+    } else {
+      dir_close(cur_dir);
+      return false; /* entry doesn't exist in directory */
+    }
+
+    next_token = strtok_r (NULL, "/", &save_ptr);
+
+    dir_close(cur_dir);
+
+    /* check if reached end of path */
+    if (next_token == NULL) {
+      break;
+    }
+
+    cur_dir = dir_open(cur_inode);
+
+    /* check if trying to descend into a file */
+    if (cur_dir == NULL)
+      return false;
+    
+    token = next_token;
+  }
+
+  if (inode != NULL)
+    *inode = cur_inode;
+  return true;
 }
+
 
 /* Adds a file named NAME to DIR, which must not already contain a
    file by that name.  The file's inode is in sector
@@ -141,7 +179,7 @@ dir_lookup (const struct dir *dir, const char *name,
    Fails if NAME is invalid (i.e. too long) or a disk or memory
    error occurs. */
 bool
-dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
+dir_add (struct dir *dir, const char *path, block_sector_t inode_sector)
 {
   struct dir_entry e;
   off_t ofs;
@@ -215,6 +253,51 @@ dir_remove (struct dir *dir, const char *name)
  done:
   inode_close (inode);
   return success;
+
+
+
+
+
+  bool
+filesys_remove (const struct dir *start_dir, const char *path) 
+{
+
+  struct inode *inode;
+  if (!dir_lookup (start_dir, path,&inode)) 
+    return false;
+
+  /* check that inode is a file or empty directory */
+  if (inode_isdir(inode) && !dir_is_empty(inode)) {
+    inode_close(inode);
+    return false;
+  }
+  else {
+    /* ok to remove inode */
+    char *name = strrchr (path, (int) '/');
+    int path_len = name-path;
+    if (path_len >= PGSIZE) {
+      inode_close(inode);
+      return false;
+    }
+
+    char *name_cpy = malloc(strnlen(name, PGSIZE));
+    if (name_cpy == NULL)
+      PANIC("ASSERT BAD");
+    strlcpy(name_cpy, name, PGSIZE);
+
+    char *dir_path = malloc(path_len);
+    strlcpy(dir_path, path, path_len);
+
+    struct dir *parent_dir = filesys_open_dir(start_dir, dir_path);
+    ASSERT(parent_dir != NULL);
+
+    /* TODO: CHECK FOR ROOT? */
+    success = dir_remove(parent_dir, name);
+    dir_close (parent_dir); 
+  } 
+
+  return success;
+}
 }
 
 /* Reads the next directory entry in DIR and stores the name in

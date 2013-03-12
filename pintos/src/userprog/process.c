@@ -991,7 +991,7 @@ bool process_chdir(const char *path)
   if (pathcpy[0] == '/') {
     start_dir = dir_open_root();
   } else {
-    start_dir = pinfo->wdir;
+    start_dir = dir_reopen(pinfo->wdir);
   }
 
   bool success;
@@ -1004,6 +1004,9 @@ bool process_chdir(const char *path)
     success = false;
   }
   
+  /* need to close what you have opened */
+  dir_close(start_dir);
+
   free(pathcpy);
   return success;
 
