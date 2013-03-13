@@ -34,6 +34,12 @@ struct file
     bool deny_write;            /* Has file_deny_write() been called? */
   };
 
+
+
+bool file_create(block_sector_t inode_sector, off_t initial_size){
+  inode_create (inode_sector, initial_size, false);
+}
+
 /* Opens a file for the given INODE, of which it takes ownership,
    and returns the new file.  Returns a null pointer if an
    allocation fails or if INODE is null. */
@@ -192,4 +198,9 @@ file_tell (struct file *file)
 {
   ASSERT (file != NULL);
   return file->pos;
+}
+
+bool
+file_is_dir(struct file *file){
+  return inode_isdir(file->inode);
 }

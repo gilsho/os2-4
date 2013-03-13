@@ -2,6 +2,7 @@
 #define USERPROG_PROCESS_H
 
 #include "filesys/filesys.h"
+#include <stdbool.h>
 
 typedef int pid_t;
 
@@ -17,5 +18,13 @@ struct file* process_get_file_desc(int fd);
 void process_remove_file_desc(int fd);
 struct dir* process_get_wdir(void);
 void process_set_wdir(struct dir *wdir);
+
+bool process_create_file(const char *path, off_t size, bool is_dir);
+bool process_remove_file(const char *path);
+
+struct dir* process_get_start_dir(const char *path);
+
+bool process_chdir(const char *path);
+
 
 #endif /* userprog/process.h */

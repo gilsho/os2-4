@@ -80,7 +80,7 @@ struct file_desc
 #define DEBUG_PROCESS_START      1
 #endif
 
-#if DEBUG_CHDIR
+#if DEBUG_PROCESS_CHDIR
 #define PRINT_PROCESS_CHDIR(X) {printf("(process_chdir) "); printf(X);}
 #define PRINT_PROCESS_CHDIR_2(X,Y) {printf("(process_chdir) "); printf(X,Y);}
 #else
@@ -88,7 +88,7 @@ struct file_desc
 #define PRINT_PROCESS_CHDIR_2(X,Y) do {} while(0)
 #endif
 
-#if DEBUG_START
+#if DEBUG_PROCESS_START
 #define PRINT_PROCESS_START(X) {printf("(process_start) "); printf(X);}
 #define PRINT_PROCESS_START_2(X,Y) {printf("(process_start) "); printf(X,Y);}
 #else
@@ -575,7 +575,6 @@ load (const char *args, void (**eip) (void), void **esp, struct file **file)
   lock_acquire(&lock_filesys);
 
   struct dir *wdir = process_get_wdir();
-  PRINT_PROCESS_START_2("wdir->inode->sector: \n", dir_get_sector(wdir));
 
   (*file) = filesys_open (wdir, file_name);
   if (*file == NULL) 
@@ -992,17 +991,14 @@ process_remove_file_desc(int fd)
 bool process_chdir(const char *path)
 {
   struct thread *t = thread_current();
-  struct dir *old_wdir = t->wdir;
-  struct dir *start_dir;
+  struct dir *start_dir = process_get_start_dir(path);
   /* assume no spaces before absolute paths */
-  if (path[0] == '/') {
-    start_dir = dir_open_root();
-  } else {
-    start_dir = dir_reopen(t->wdir);
-  }
 
+  PRINT_PROCESS_CHDIR_2("Path is: %s\n", path);
   bool success;
   struct dir *new_wdir = filesys_open_dir(start_dir,path);
+  PRINT_PROCESS_CHDIR_2("new_wdir is: %p\n", new_wdir);
+
   if (new_wdir != NULL) {
     dir_close(t->wdir);
     t->wdir = new_wdir;
@@ -1015,6 +1011,34 @@ bool process_chdir(const char *path)
   dir_close(start_dir);
 
   return success;
+}
+
+/* Caller must close directory */
+struct dir*
+process_get_start_dir(const char *path){
+  struct dir *start_dir;
+  if (path[0] == '/') {
+    start_dir = dir_open_root();
+  } else {
+    start_dir = dir_reopen(thread_current()->wdir);
+  }
+  return start_dir;
+}
+
+bool
+process_create_file(const char *path, off_t size, bool is_dir){
+  struct dir *start_dir = process_get_start_dir(path);
+  bool result = filesys_create(start_dir, path, size, is_dir);
+  dir_close(start_dir);
+  return result;
+}
+
+bool
+process_remove_file(const char *path){
+  struct dir *start_dir = process_get_start_dir(path);
+  bool result = filesys_remove(start_dir, path);
+  dir_close(start_dir);
+  return result;
 }
 
 struct dir* 

@@ -262,7 +262,7 @@ bool sys_create(int *stack, uint32_t *eax)
   if (fname_len > 0 && fname_len <= FILENAME_MAX)
   {
     lock_acquire(&lock_filesys);
-    result = (int) filesys_create (file_name, (off_t) size);
+    result = (int) process_create_file (file_name, (off_t) size, false);
     lock_release(&lock_filesys);
   }
   
@@ -283,7 +283,7 @@ bool sys_remove(int *stack, uint32_t *eax)
    
   int result;
   lock_acquire(&lock_filesys);
-  result = (int)filesys_remove (process_get_wdir(), file_name);
+  result = (int)process_remove_file(file_name);
   lock_release(&lock_filesys);
   
   /* push syscall result to the user program */
@@ -300,11 +300,12 @@ bool sys_open(int *stack, uint32_t *eax)
   if (!valid_str(name, PGSIZE))
     return false;
     
-	struct file *f;
-	
-	lock_acquire(&lock_filesys);
-	f = filesys_open (process_get_wdir(), name);
-	lock_release(&lock_filesys);
+	struct file *f = NULL;
+	if(strnlen(name, PGSIZE) > 0){
+		lock_acquire(&lock_filesys);
+		f = filesys_open (process_get_wdir(), name);
+		lock_release(&lock_filesys);
+	}
 	
 	/* add a new file descriptor to the thread's fd list */
 	int fd = -1;
@@ -411,7 +412,7 @@ bool sys_write(int *stack, uint32_t *eax)
 	else {
 	  /* check for invalid file or STDIN */
 	  struct file *file = process_get_file_desc(fd);
-	  if (file == NULL || fd == 0)
+	  if (file == NULL || fd == 0 || file_is_dir(file))
 	  {
 	    result = false;
 	  }
@@ -489,33 +490,61 @@ bool sys_close(int *stack)
 
 bool sys_chdir(int *stack, uint32_t *eax)
 {
-	valid_str;
-	char *dir = pop_arg(&stack);
+	char *dir_name = (char *)pop_arg(&stack);
 
-	int success = (int) process_chdir(dir);
+	int success = (int) process_chdir(dir_name);
 	memcpy(eax, &success, sizeof(uint32_t));
 	return true;
 }
 
 bool sys_mkdir(int *stack, uint32_t *eax)
 {
-	char *dir = pop_arg(&stack);
+	char *dir_name = (char *)pop_arg(&stack);
+	int result = 0;
+	if(strnlen(dir_name, PGSIZE) > 0)
+    result = (int)process_create_file(dir_name, 0, true);
+
+  memcpy(eax, &result, sizeof(uint32_t));
+
+  return true;
+
 }
 
 bool sys_readdir(int *stack, uint32_t *eax)
 {
-	int fd = pop_arg(&stack);
-	char *name = pop_arg(&stack);
+	int fd = (int)pop_arg(&stack);
+	char *name = (char *)pop_arg(&stack);
+	struct file *file = process_get_file_desc(fd);
+	int result = 0;
+	struct dir *dir; 
+	if(file != NULL && file_is_dir(file)){
+		dir = dir_open_file(file);
+		result = (int)dir_readdir(dir, name);
+		dir_close(dir);
+	}
+
+	memcpy(eax, &result, sizeof(uint32_t));
+	return true;
 }
 
 bool sys_isdir(int *stack, uint32_t *eax)
 {
-	int fd = pop_arg(&stack);	
+	int fd = (int)pop_arg(&stack);
+	struct file *file = process_get_file_desc(fd);
+	int result = 0;
+	if(file == NULL)
+		result = 0;
+	else
+		result = file_is_dir(file);
+
+	memcpy(eax, &result, sizeof(uint32_t));
+	return true;
+
 }
 
 bool sys_inumber(int *stack, uint32_t *eax)
 {
-	int fd = pop_arg(&stack);
+	int fd = (int)pop_arg(&stack);
 }
 
 

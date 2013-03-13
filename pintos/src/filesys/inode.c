@@ -19,6 +19,14 @@
 #define DEBUG_WRITE         0
 #define DEBUG_FREE_MAP      0
 #define DEBUG_FREE_SECTOR   0
+#else
+#define DEBUG_EXTEND        0
+#define DEBUG_CREATE        0
+#define DEBUG_OPEN          0
+#define DEBUG_READ          0
+#define DEBUG_WRITE         0
+#define DEBUG_FREE_MAP      0
+#define DEBUG_FREE_SECTOR   0
 #endif
 
 #if DEBUG_EXTEND
@@ -282,7 +290,7 @@ inode_init (void)
    Returns true if successful.
    Returns false if memory or disk allocation fails. */
 bool
-inode_create (block_sector_t sector, off_t length)
+inode_create (block_sector_t sector, off_t length, bool is_dir)
 {
   PRINT_CREATE_2("sector: %d\n", (int) sector);
   PRINT_CREATE_2("length: %d\n", (int) length);
@@ -300,6 +308,7 @@ inode_create (block_sector_t sector, off_t length)
 
   disk_inode->length = 0;
   disk_inode->magic = INODE_MAGIC;
+  disk_inode->is_dir = is_dir;
 
   cache_write(sector, disk_inode, 0, BLOCK_SECTOR_SIZE, true);
 
@@ -775,7 +784,6 @@ inode_isdir(struct inode *inode)
   if (inode->sector == ROOT_DIR_SECTOR)
     return true;
 
-  printf("(inode-isdir) inode->sector: %d", (int) inode->sector);
   bool isdir;
   off_t sector_ofs = offsetof(struct inode_disk, is_dir);
   cache_read(inode->sector, &isdir, sector_ofs, sizeof(bool),true); 

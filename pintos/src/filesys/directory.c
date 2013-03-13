@@ -9,8 +9,12 @@
 
 #if (DEBUG & DEBUG_DIR)
 #define DEBUG_ADD        1
-#define DEBUG_SPLIT      1
-#define DEBUG_LOOKUP     1
+#define DEBUG_REMOVE     1
+#define DEBUG_LOOKUP     0
+#else
+#define DEBUG_ADD        0
+#define DEBUG_LOOKUP     0
+#define DEBUG_REMOVE     0
 #endif
 
 #if DEBUG_ADD
@@ -21,14 +25,6 @@
 #define PRINT_ADD_2(X,Y) do {} while(0)
 #endif
 
-#if DEBUG_SPLIT
-#define PRINT_SPLIT(X) {printf("(dir-split) "); printf(X);}
-#define PRINT_SPLIT_2(X,Y) {printf("(dir-split) "); printf(X,Y);}
-#else
-#define PRINT_SPLIT(X) do {} while(0)
-#define PRINT_SPLIT_2(X,Y) do {} while(0)
-#endif
-
 #if DEBUG_LOOKUP
 #define PRINT_LOOKUP(X) {printf("(dir-lookup) "); printf(X);}
 #define PRINT_LOOKUP_2(X,Y) {printf("(dir-lookup) "); printf(X,Y);}
@@ -36,6 +32,19 @@
 #define PRINT_LOOKUP(X) do {} while(0)
 #define PRINT_LOOKUP_2(X,Y) do {} while(0)
 #endif
+
+#if DEBUG_REMOVE
+#define PRINT_REMOVE(X) {printf("(dir-remove) "); printf(X);}
+#define PRINT_REMOVE_2(X,Y) {printf("(dir-remove) "); printf(X,Y);}
+#else
+#define PRINT_REMOVE(X) do {} while(0)
+#define PRINT_REMOVE_2(X,Y) do {} while(0)
+#endif
+
+
+#define PARENT_DIR ".."
+#define CURRENT_DIR "."
+
 
 
 /* A directory. */
@@ -54,18 +63,45 @@ struct dir_entry
   };
 
 
-bool split_path(const char *path, char **parent_path, char **name);
+#define EMPTY_DIR_SIZE (2 * sizeof(struct dir_entry))
+
 bool add_entry(struct dir *dir, const char *name, block_sector_t inode_sector);
 bool remove_entry(struct dir *dir, const char *name);
+bool dir_is_empty(struct inode *inode);
 
+bool
+dir_create_root(void){
+  if(!inode_create (ROOT_DIR_SECTOR, EMPTY_DIR_SIZE, true))
+    return false;
+
+  struct dir *my_dir;
+  if( (my_dir = dir_open(inode_open(ROOT_DIR_SECTOR)) ) ){
+
+    return dir_add(my_dir, CURRENT_DIR, ROOT_DIR_SECTOR) &&
+     dir_add(my_dir, CURRENT_DIR, ROOT_DIR_SECTOR);
+
+  }
+  return false;
+}
 
 /* Creates a directory with space for ENTRY_CNT entries in the
    given SECTOR.  Returns true if successful, false on failure. */
 bool
-dir_create (block_sector_t sector, size_t entry_cnt)
+dir_create (struct dir *parent_dir, block_sector_t sector)
 {
-  return inode_create (sector, entry_cnt * sizeof (struct dir_entry));
+  if(!inode_create (sector, EMPTY_DIR_SIZE, true))
+    return false;
+
+  struct dir *my_dir;
+  if( (my_dir = dir_open(inode_open(sector)) ) ){
+
+    return dir_add(my_dir, CURRENT_DIR, sector) &&
+     dir_add(my_dir, PARENT_DIR, dir_get_sector(parent_dir));
+
+  }
+  return false;
 }
+
 
 /* Opens and returns the directory for the given INODE, of which
    it takes ownership.  Returns a null pointer on failure. */
@@ -234,6 +270,7 @@ dir_lookup (struct dir *start_dir, const char *path,
    Returns true if successful, false on failure.
    Fails if NAME is invalid (i.e. too long) or a disk or memory
    error occurs. */
+   /*
 bool
 dir_add (struct dir *start_dir, const char *path, block_sector_t inode_sector)
 {
@@ -248,29 +285,24 @@ dir_add (struct dir *start_dir, const char *path, block_sector_t inode_sector)
   ASSERT (start_dir != NULL);
   ASSERT (path != NULL);
 
-  /* Check NAME for validity. */
+
   if (*path == '\0')
     goto done; 
 
-  PRINT_ADD("0\n");
 
   if (!split_path(path, &parent_path, &name))
     goto done;
 
-  PRINT_ADD("1\n");
 
-  if (strnlen(name, PGSIZE) > NAME_MAX)
-    goto done;
-
-  PRINT_ADD("2\n");
 
   if (!dir_lookup(start_dir, parent_path, &inode))
     goto done;
 
+  if (strnlen(name, PGSIZE) > NAME_MAX)
+    goto done;
+
   PRINT_ADD_2("new inode->sector: %d\n", inode_get_sector(inode));
 
-
-  PRINT_ADD("3\n");
 
   struct dir *parent_dir = dir_open(inode);
   if (parent_dir == NULL)
@@ -288,10 +320,6 @@ dir_add (struct dir *start_dir, const char *path, block_sector_t inode_sector)
   if (!add_entry(parent_dir, name, inode_sector))
     goto done;
 
-  PRINT_ADD_2("after add entry -> start_dir->inode->sector: %d\n", 
-    inode_get_sector(start_dir->inode));
-  PRINT_ADD_2("after add entry -> parent_dir->inode->sector: %d\n", 
-    inode_get_sector(parent_dir->inode));
 
   success = true;
 
@@ -300,68 +328,15 @@ dir_add (struct dir *start_dir, const char *path, block_sector_t inode_sector)
       free(parent_path);
     if (name != NULL)
       free(name);
-    /*if (inode != NULL)
-      free(inode);*/
     return success;
 }
 
-bool
-split_path(const char *path, char **parent_path, char **name)
-{
-  PRINT_SPLIT_2("path: %s\n", path);
-
-  bool success = false;
-
-  int full_len = strnlen(path, PGSIZE);
-  if (full_len == PGSIZE)
-    goto done;
-
-  char *pathcpy = NULL;
-  pathcpy = malloc(full_len+2);
-  if (pathcpy == NULL)
-    goto done;
-
-  pathcpy[0] = '/';
-  memcpy(pathcpy+1, path, full_len+1);
-
-  char *pivot = strrchr (pathcpy, (int) '/');
-
-  PRINT_SPLIT_2("pivot: %s\n", pivot);
-
-  int parent_path_len = pivot - pathcpy;
-  int name_len        = full_len - parent_path_len - 1;
-
-  PRINT_SPLIT_2("parent_path_len: %d\n", parent_path_len);
-  PRINT_SPLIT_2("name_len: %d\n", name_len);  
-
-  *parent_path = calloc(parent_path_len+1, sizeof(char));
-  if (*parent_path == NULL)
-    goto done;
-
-  *name = calloc(name_len+1, sizeof(char));
-  if (*name == NULL)
-    goto done;
-
-  memcpy(*parent_path, path, parent_path_len);
-  *parent_path[parent_path_len]=0;
-
-  memcpy(*name, pivot+1, name_len+1);
-
-  PRINT_SPLIT_2("parent_path: %s\n", *parent_path);
-  PRINT_SPLIT_2("name: %s\n", *name);
-
-  success = true;
-
-  done:
-    if (pathcpy != NULL)
-      free(pathcpy);
-    return success;
-}
+*/
 
 /* adds a directory entry to DIR with NAME
    at i-number/sector INODE_SECTOR */
 bool
-add_entry(struct dir *dir, const char *name, block_sector_t inode_sector)
+dir_add(struct dir *parent_dir, const char *name, block_sector_t inode_sector)
 {
   struct dir_entry e;
   off_t ofs;
@@ -373,7 +348,7 @@ add_entry(struct dir *dir, const char *name, block_sector_t inode_sector)
      inode_read_at() will only return a short read at end of file.
      Otherwise, we'd need to verify that we didn't get a short
      read due to something intermittent such as low memory. */
-  for (ofs = 0; inode_read_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
+  for (ofs = 0; inode_read_at (parent_dir->inode, &e, sizeof e, ofs) == sizeof e;
        ofs += sizeof e) 
     if (!e.in_use)
       break;
@@ -386,14 +361,14 @@ add_entry(struct dir *dir, const char *name, block_sector_t inode_sector)
   PRINT_ADD_2("e.in_use: %d\n", (int) e.in_use);
   PRINT_ADD_2("e.inode_sector: %d\n", (int) e.inode_sector);
 
-  success = inode_write_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
+  success = inode_write_at (parent_dir->inode, &e, sizeof e, ofs) == sizeof e;
   return success;
 }
 
 /* Removes any entry for NAME in DIR.
    Returns true if successful, false on failure,
    which occurs only if there is no file with the given NAME. */
-bool
+/*bool
 dir_remove (struct dir *start_dir, const char *path) 
 {
   bool success = false;
@@ -404,9 +379,12 @@ dir_remove (struct dir *start_dir, const char *path)
   ASSERT (start_dir != NULL);
   ASSERT (path != NULL);
 
-  /* Check NAME for validity. */
+
+
   if (*path == '\0')
     return false;
+
+  PRINT_REMOVE_2("start dir: %p\n", start_dir);
 
   if (!split_path(path, &parent_path, &name))
     return false;
@@ -416,6 +394,7 @@ dir_remove (struct dir *start_dir, const char *path)
 
   if (!dir_lookup(start_dir, parent_path, &inode))
     goto done;
+
 
   struct dir *parent_dir = dir_open(inode);
   if (parent_dir == NULL)
@@ -437,25 +416,32 @@ dir_remove (struct dir *start_dir, const char *path)
     if (inode != NULL)
       inode_close(inode);
     return success;
-}
+}*/
 
 bool
-remove_entry(struct dir *dir, const char *name)
+dir_remove(struct dir *dir, const char *name)
 {
   struct dir_entry e;
   off_t ofs;
   bool success = false;
   struct inode *inode = NULL;
 
+  if(strcmp(name, PARENT_DIR) == 0 || strcmp(name, CURRENT_DIR) == 0)
+    return false;
+
   /* Find directory entry. */
+  PRINT_REMOVE("HERE2\n");
   if (!lookup (dir, name, &e, &ofs))
     goto done;
 
   /* Open inode. */
+  PRINT_REMOVE("HERE3\n");
+
   inode = inode_open (e.inode_sector);
-  if (inode == NULL)
+  if (inode == NULL || (inode_isdir(inode) && !dir_is_empty(inode)))
     goto done;
 
+  PRINT_REMOVE("HERE4\n");
   /* Erase directory entry. */
   e.in_use = false;
   if (inode_write_at (dir->inode, &e, sizeof e, ofs) != sizeof e) 
@@ -464,10 +450,16 @@ remove_entry(struct dir *dir, const char *name)
   /* Remove inode. */
   inode_remove (inode);
   success = true;
+  PRINT_REMOVE("HERE5\n");
 
  done:
   inode_close (inode);
   return success;
+}
+
+struct dir* 
+dir_open_file(struct file *file){
+  return dir_open(inode_reopen(file_get_inode(file)));
 }
 
 /* Reads the next directory entry in DIR and stores the name in
@@ -488,4 +480,14 @@ dir_readdir (struct dir *dir, char name[NAME_MAX + 1])
         } 
     }
   return false;
+}
+
+bool
+dir_is_empty(struct inode *inode){
+  if(inode == NULL)
+    return false;
+  int len = (int)inode_length(inode);
+  PRINT_REMOVE_2("LENGTH IS: %d\n", len);
+  PRINT_REMOVE_2("EMPTY SIZE IS: %d\n", EMPTY_DIR_SIZE);
+  return len <= (int)EMPTY_DIR_SIZE;
 }

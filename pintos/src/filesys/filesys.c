@@ -8,9 +8,15 @@
 #include "filesys/directory.h"
 #include "filesys/cache.h"
 #include "userprog/process.h"
+#include "threads/malloc.h"
+#include "threads/vaddr.h"
 
 #if (DEBUG & DEBUG_FILESYS)
 #define DEBUG_FCREATE       1
+#define DEBUG_SPLIT         1
+#else
+#define DEBUG_FCREATE       0
+#define DEBUG_SPLIT         0
 #endif
 
 #if DEBUG_FCREATE
@@ -21,12 +27,25 @@
 #define PRINT_FCREATE_2(X,Y) do {} while(0)
 #endif
 
+#if DEBUG_SPLIT
+#define PRINT_SPLIT(X) {printf("(dir-split) "); printf(X);}
+#define PRINT_SPLIT_2(X,Y) {printf("(dir-split) "); printf(X,Y);}
+#else
+#define PRINT_SPLIT(X) do {} while(0)
+#define PRINT_SPLIT_2(X,Y) do {} while(0)
+#endif
+
 
 
 /* Partition that contains the file system. */
 struct block *fs_device;
 
 static void do_format (void);
+
+bool split_path(const char *path, char **parent_path, char **name);
+
+bool filesys_resolve_path(struct dir* start_dir, const char *path, 
+  struct dir **parent_dir, char **name);
 
 /* Initializes the file system module.
    If FORMAT is true, reformats the file system. */
@@ -46,6 +65,8 @@ filesys_init (bool format)
   free_map_open ();  
 }
 
+
+
 /* Shuts down the file system module, writing any unwritten data
    to disk. */
 void
@@ -55,37 +76,91 @@ filesys_done (void)
   free_map_close ();
 }
 
+
+/* caller must free name */
+bool filesys_resolve_path(struct dir* start_dir, const char *path, 
+  struct dir **parent_dir, char **name){
+
+  char *parent_path = NULL;
+  struct inode *inode = NULL;
+  bool success = false;
+  PRINT_SPLIT("HEREEEE0\n");
+  if(!split_path(path, &parent_path, name))
+    goto done;
+
+  PRINT_SPLIT("HEREEEE\n");
+  if(!dir_lookup(start_dir, parent_path, &inode))
+    goto done;
+
+  *parent_dir = dir_open(inode);
+  PRINT_SPLIT("HEREEEE2\n");
+  if (*parent_dir == NULL)
+  {
+    goto done;
+  }
+
+  success = true;
+  
+  done:
+    if (parent_path != NULL)
+      free(parent_path);
+    /* Should we free inode??*/
+
+  return success;
+}
+
 /* Creates a file named NAME with the given INITIAL_SIZE.
    Returns true if successful, false otherwise.
    Fails if a file named NAME already exists,
    or if internal memory allocation fails. */
 bool
-filesys_create (const char *name, off_t initial_size) 
+filesys_create (struct dir *start_dir, const char *path, off_t initial_size, bool is_dir) 
 {
-  PRINT_FCREATE_2("name: %s\n", name);
+  PRINT_FCREATE_2("path: %s\n", path);
   /* TODO: CHECK REMOVED FLAG */
+  bool success = false;
   block_sector_t inode_sector = 0;
-  struct dir *dir = dir_open_root ();
-  /*bool success = (dir != NULL
-                  && free_map_allocate (1, &inode_sector)
-                  && inode_create (inode_sector, initial_size)
-                  && dir_add (dir, name, inode_sector));*/
-  bool success = dir != NULL;
-  PRINT_FCREATE_2("dir != NULL: %d\n", (int)success);
-  success = success & free_map_allocate (1, &inode_sector);
-  PRINT_FCREATE_2("free_map_allocate success: %d\n", (int)success);
-  /*PRINT_FCREATE_2("inode_sector: %d\n", inode_sector);*/
-  success = success & inode_create (inode_sector, initial_size);
-  PRINT_FCREATE_2("inode_create success: %d\n", (int)success);
-  PRINT_FCREATE_2("1 dir->inode->sector: %d\n", (int)dir_get_sector(dir));
-  success = success & dir_add (dir, name, inode_sector);
-  PRINT_FCREATE_2("2 dir->inode->sector: %d\n", (int)dir_get_sector(dir));
-  PRINT_FCREATE_2("dir_add success: %d\n", (int)success);
+  char *name = NULL;
+  struct dir *parent_dir = NULL;
 
+  if(dir_lookup(start_dir, path, NULL))
+    goto done;
+
+  if(start_dir == NULL || !free_map_allocate (1, &inode_sector))
+    goto done;
   
-  if (!success && inode_sector != 0) 
-    free_map_release (inode_sector, 1);
-  dir_close (dir);
+
+  if(!filesys_resolve_path(start_dir, path, &parent_dir, &name))
+    goto done;
+
+  PRINT_FCREATE_2("name: %s\n", name);
+  PRINT_FCREATE_2("parent_dir: %p\n", parent_dir);
+  /* TAKE THIS OUT */
+  ASSERT (name != NULL);
+
+  if (strnlen(name, PGSIZE) > NAME_MAX)
+    goto done;
+
+  if(is_dir){
+    if(!dir_create(parent_dir, inode_sector))
+      goto done;
+  }else{
+    if(!file_create(inode_sector, initial_size))
+      goto done;
+  }
+
+  if(!dir_add (parent_dir, name, inode_sector))
+    goto done;
+
+  success = true;
+      
+  done:
+    if(name != NULL)
+      free(name);
+    if(parent_dir != NULL)
+      dir_close(parent_dir);
+    if (!success && inode_sector != 0) 
+      free_map_release (inode_sector, 1);
 
   PRINT_FCREATE_2("returning: %d\n", (int)success);
   return success;
@@ -102,6 +177,7 @@ filesys_open (struct dir *start_dir, const char *path)
   /* TODO: CHECK REMOVED FLAG */
 
   struct inode *inode = NULL;
+  PRINT_FCREATE_2("in open: start dir->inode: %d\n", dir_get_sector(start_dir));
   dir_lookup(start_dir,path,&inode);
 
   /* IS WRITING TO DIR FILES ALLOWED? */
@@ -117,7 +193,49 @@ filesys_open (struct dir *start_dir, const char *path)
 bool
 filesys_remove (struct dir *start_dir, const char *path) 
 {
-  return dir_remove(start_dir, path);
+  bool success = false;
+  struct inode *inode = NULL;
+  char *parent_path = NULL;
+  char *name        = NULL;
+
+  ASSERT (start_dir != NULL);
+  ASSERT (path != NULL);
+
+
+  /* Check NAME for validity. */
+  if (*path == '\0')
+    return false;
+
+  if (!split_path(path, &parent_path, &name))
+    return false;
+
+  if (strnlen(name, PGSIZE) > NAME_MAX)
+    goto done;
+
+  if (!dir_lookup(start_dir, parent_path, &inode))
+    goto done;
+
+
+  struct dir *parent_dir = dir_open(inode);
+  if (parent_dir == NULL)
+  {
+    inode = NULL;
+    goto done;
+  }
+
+  if (!dir_remove(parent_dir, name))
+    goto done;
+
+  success = true;
+
+  done:
+    if (parent_path != NULL)
+      free(parent_path);
+    if (name != NULL)
+      free(name);
+    if (inode != NULL)
+      inode_close(inode);
+    return success;
 }
 
 
@@ -127,7 +245,7 @@ do_format (void)
 {
   printf ("Formatting file system...\n");
   free_map_create ();
-  if (!dir_create (ROOT_DIR_SECTOR, 16))
+  if (!dir_create_root())
     PANIC ("root directory creation failed");
   free_map_close ();
   printf ("done.\n");
@@ -140,7 +258,54 @@ filesys_open_dir(struct dir *start_dir, const char *path)
    struct inode *inode = NULL;
   dir_lookup(start_dir,path,&inode);
 
+  PRINT_FCREATE_2("inode is: %p\n", inode);
   /* IS WRITING TO DIR FILES ALLOWED? */
   return dir_open(inode);
+}
+
+bool
+split_path(const char *path, char **parent_path, char **name)
+{
+  PRINT_SPLIT_2("path: %s\n", path);
+
+  /*bool success = false;*/
+
+  int full_len = strnlen(path, PGSIZE);
+  if (full_len == PGSIZE || full_len == 0)
+    return false;
+
+  int parent_len = 0;
+  const char *pivot = strrchr (path, (int) '/');
+  if(pivot != NULL){
+
+    parent_len = pivot - path;
+    *parent_path = calloc(parent_len + 1, sizeof(char));
+    if(*parent_path == NULL){
+      PANIC("Could not allocate parent path");
+    }
+
+    memcpy(*parent_path, path, parent_len);
+
+    pivot++;
+
+  }else{
+    *parent_path = calloc(1, sizeof(char));
+    if(*parent_path == NULL)
+      PANIC("Could not allocate parent_path");
+    pivot = path;
+  }
+
+  int name_len = strnlen(pivot, PGSIZE);
+
+  *name = calloc(name_len+1, sizeof(char));
+  if(*name == NULL)
+      PANIC("Could not allocate name");
+  
+  memcpy(*name, pivot, name_len);
+
+  PRINT_SPLIT_2("parent: %s\n", *parent_path);
+  PRINT_SPLIT_2("name: %s\n", *name);
+
+  return true;
 }
 
