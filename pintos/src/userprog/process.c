@@ -78,6 +78,11 @@ struct file_desc
 #if (DEBUG & DEBUG_PROCESS)
 #define DEBUG_PROCESS_CHDIR      1
 #define DEBUG_PROCESS_START      1
+#define DEBUG_GET_START_DIR      1
+#else
+#define DEBUG_PROCESS_CHDIR      0
+#define DEBUG_PROCESS_START      0
+#define DEBUG_GET_START_DIR      0
 #endif
 
 #if DEBUG_PROCESS_CHDIR
@@ -96,6 +101,13 @@ struct file_desc
 #define PRINT_PROCESS_START_2(X,Y) do {} while(0)
 #endif
 
+#if DEBUG_GET_START_DIR
+#define PRINT_GET_START_DIR(X) {printf("(process-get-start-dir) "); printf(X);}
+#define PRINT_GET_START_DIR_2(X,Y) {printf("(process-get-start-dir) "); printf(X,Y);}
+#else
+#define PRINT_GET_START_DIR(X) do {} while(0)
+#define PRINT_GET_START_DIR_2(X,Y) do {} while(0)
+#endif
 
 /* skip STDIN(0) and STDOUT(1) */
 #define FILE_DESCRIPTOR_START 2
@@ -1016,13 +1028,24 @@ bool process_chdir(const char *path)
 /* Caller must close directory */
 struct dir*
 process_get_start_dir(const char *path){
+  PRINT_GET_START_DIR_2("path: %s\n",path);
   struct dir *start_dir;
   if (path[0] == '/') {
+    PRINT_GET_START_DIR("absolute path detected\n");
     start_dir = dir_open_root();
   } else {
+    PRINT_GET_START_DIR("relative path detected\n");
     start_dir = dir_reopen(thread_current()->wdir);
   }
+  PRINT_GET_START_DIR_2("start_dir sector: %d\n",dir_get_sector(start_dir));
   return start_dir;
+}
+
+struct file *
+process_open_file(const char *name)
+{
+  struct dir *start_dir = process_get_start_dir(name);
+  return filesys_open (start_dir,name);
 }
 
 bool

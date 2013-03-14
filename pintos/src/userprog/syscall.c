@@ -297,18 +297,19 @@ bool sys_open(int *stack, uint32_t *eax)
 {
 	const char *name = (const char *) pop_arg(&stack);
 
+	int fd = -1;
+	struct file *f = NULL;
+
   if (!valid_str(name, PGSIZE))
     return false;
-    
-	struct file *f = NULL;
+
 	if(strnlen(name, PGSIZE) > 0){
 		lock_acquire(&lock_filesys);
-		f = filesys_open (process_get_wdir(), name);
+		f = process_open_file(name);
 		lock_release(&lock_filesys);
 	}
 	
 	/* add a new file descriptor to the thread's fd list */
-	int fd = -1;
 	if (f != NULL)
 	  fd = process_add_file_desc(f);
 	
@@ -545,6 +546,15 @@ bool sys_isdir(int *stack, uint32_t *eax)
 bool sys_inumber(int *stack, uint32_t *eax)
 {
 	int fd = (int)pop_arg(&stack);
+	struct file *file = process_get_file_desc(fd);
+	int result = 0;
+	if(file == NULL) 
+		result = 0;
+	else
+		result = file_get_inumber(file);
+
+	memcpy(eax, &result, sizeof(uint32_t));
+	return true;
 }
 
 

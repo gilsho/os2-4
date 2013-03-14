@@ -469,6 +469,22 @@ inode_get_inumber (const struct inode *inode)
   return inode->sector;
 }
 
+void 
+inode_destroy(block_sector_t sector)
+{
+  struct inode *inode = inode_open(sector);
+  inode_remove(inode);
+  inode->open_cnt = 0;
+  inode_close(inode);
+}
+
+
+bool
+inode_is_removed(struct inode * inode)
+{
+  return (inode->removed);
+}
+
 /* Closes INODE and writes it to disk.
    If this was the last reference to INODE, frees its memory.
    If INODE was also a removed inode, frees its blocks. */

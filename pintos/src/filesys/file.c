@@ -201,6 +201,14 @@ file_tell (struct file *file)
 }
 
 bool
-file_is_dir(struct file *file){
+file_is_dir(struct file *file)
+{
   return inode_isdir(file->inode);
+}
+
+
+int 
+file_get_inumber(struct file *file) 
+{
+  return (int) inode_get_sector(file->inode);
 }

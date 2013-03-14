@@ -12,6 +12,10 @@
    retained, but much longer full path names must be allowed. */
 #define NAME_MAX 14
 
+#define PARENT_DIR  		".."
+#define CURRENT_DIR 		"."
+#define ROOT_DIR_NAME		"/"
+
 struct inode;
 
 /* Opening and closing directories. */

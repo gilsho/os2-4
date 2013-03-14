@@ -10,11 +10,13 @@
 #if (DEBUG & DEBUG_DIR)
 #define DEBUG_ADD        1
 #define DEBUG_REMOVE     1
-#define DEBUG_LOOKUP     0
+#define DEBUG_LOOKUP     1
+#define DEBUG_READDIR    1
 #else
 #define DEBUG_ADD        0
 #define DEBUG_LOOKUP     0
 #define DEBUG_REMOVE     0
+#define DEBUG_READDIR    0
 #endif
 
 #if DEBUG_ADD
@@ -42,10 +44,13 @@
 #endif
 
 
-#define PARENT_DIR ".."
-#define CURRENT_DIR "."
-
-
+#if DEBUG_READDIR
+#define PRINT_READDIR(X) {printf("(dir-readdir) "); printf(X);}
+#define PRINT_READDIR_2(X,Y) {printf("(dir-readdir) "); printf(X,Y);}
+#else
+#define PRINT_READDIR(X) do {} while(0)
+#define PRINT_READDIR_2(X,Y) do {} while(0)
+#endif
 
 /* A directory. */
 struct dir 
@@ -77,8 +82,11 @@ dir_create_root(void){
   struct dir *my_dir;
   if( (my_dir = dir_open(inode_open(ROOT_DIR_SECTOR)) ) ){
 
-    return dir_add(my_dir, CURRENT_DIR, ROOT_DIR_SECTOR) &&
-     dir_add(my_dir, CURRENT_DIR, ROOT_DIR_SECTOR);
+    bool success = dir_add(my_dir, CURRENT_DIR, ROOT_DIR_SECTOR) &&
+                  dir_add(my_dir, CURRENT_DIR, ROOT_DIR_SECTOR);
+     dir_close(my_dir);
+
+     return success;
 
   }
   return false;
@@ -95,9 +103,10 @@ dir_create (struct dir *parent_dir, block_sector_t sector)
   struct dir *my_dir;
   if( (my_dir = dir_open(inode_open(sector)) ) ){
 
-    return dir_add(my_dir, CURRENT_DIR, sector) &&
-     dir_add(my_dir, PARENT_DIR, dir_get_sector(parent_dir));
-
+    bool success = dir_add(my_dir, CURRENT_DIR, sector) &&
+                   dir_add(my_dir, PARENT_DIR, dir_get_sector(parent_dir));
+    dir_close(my_dir);
+    return success;
   }
   return false;
 }
@@ -232,11 +241,14 @@ dir_lookup (struct dir *start_dir, const char *path,
 
   token = strtok_r (pathcpy, "/", &save_ptr);
 
+  PRINT_LOOKUP_2("before loop, token: %s\n", token);
   while (token != NULL) {
-    
+    PRINT_LOOKUP_2("token %s\n", token);
     if(lookup (cur_dir, token, &e, NULL)) {
+      PRINT_LOOKUP_2("token found in cur_dir. sector is: %d\n",e.inode_sector);
       cur_inode = inode_open (e.inode_sector);
     } else {
+      PRINT_LOOKUP("token not found in cur_dir\n");
       dir_close(cur_dir);
       return false; /* entry doesn't exist in directory */
     }
@@ -341,6 +353,10 @@ dir_add(struct dir *parent_dir, const char *name, block_sector_t inode_sector)
   struct dir_entry e;
   off_t ofs;
   bool success;
+
+  if (inode_is_removed(parent_dir->inode))
+    return false;
+
   /* Set OFS to offset of free slot.
      If there are no free slots, then it will be set to the
      current end-of-file.
@@ -449,11 +465,14 @@ dir_remove(struct dir *dir, const char *name)
 
   /* Remove inode. */
   inode_remove (inode);
+  inode = NULL;
+
   success = true;
   PRINT_REMOVE("HERE5\n");
 
  done:
-  inode_close (inode);
+  if (inode != NULL)
+    inode_close (inode);
   return success;
 }
 
@@ -470,24 +489,46 @@ dir_readdir (struct dir *dir, char name[NAME_MAX + 1])
 {
   struct dir_entry e;
 
+  PRINT_READDIR_2("dir: %p\n",dir);
+  PRINT_READDIR_2("dir sector: %d\n", dir_get_sector(dir));
   while (inode_read_at (dir->inode, &e, sizeof e, dir->pos) == sizeof e) 
     {
       dir->pos += sizeof e;
       if (e.in_use)
         {
+          PRINT_READDIR_2("pos: %d\n",dir->pos);
           strlcpy (name, e.name, NAME_MAX + 1);
+          PRINT_READDIR_2("name: %s\n",name);
+          if(strcmp(name, PARENT_DIR) == 0 || strcmp(name, CURRENT_DIR) == 0)
+            continue;
           return true;
         } 
     }
   return false;
 }
 
+/* tries to find an entry in the directory listing that is not PARENT_DIR
+   or CURRENT_DIR */
 bool
 dir_is_empty(struct inode *inode){
   if(inode == NULL)
     return false;
-  int len = (int)inode_length(inode);
-  PRINT_REMOVE_2("LENGTH IS: %d\n", len);
-  PRINT_REMOVE_2("EMPTY SIZE IS: %d\n", EMPTY_DIR_SIZE);
-  return len <= (int)EMPTY_DIR_SIZE;
+
+  struct dir_entry e;
+  off_t pos = 0;
+  char name[NAME_MAX + 1];
+
+  while (inode_read_at (inode, &e, sizeof e, pos) == sizeof e) 
+  {
+    pos += sizeof e;
+    if (e.in_use)
+      {
+        strlcpy (name, e.name, NAME_MAX + 1);
+        if(strcmp(name, PARENT_DIR) == 0 || strcmp(name, CURRENT_DIR) == 0)
+          continue;
+        /* found entry that is not current or parent */
+        return false;
+      } 
+  }
+  return true;
 }

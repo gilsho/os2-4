@@ -23,6 +23,7 @@ bool process_create_file(const char *path, off_t size, bool is_dir);
 bool process_remove_file(const char *path);
 
 struct dir* process_get_start_dir(const char *path);
+struct file *process_open_file(const char *name);
 
 bool process_chdir(const char *path);
 
