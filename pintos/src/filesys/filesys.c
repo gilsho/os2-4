@@ -201,19 +201,44 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
    otherwise.
    Fails if no file named NAME exists,
    or if an internal memory allocation fails. */
-struct file *
-filesys_open (struct dir *start_dir, const char *path)
+/*struct file * */
+struct file*
+filesys_open_file (struct dir *start_dir, const char *path)
 {         
-  /* TODO: CHECK REMOVED FLAG */
-
   struct inode *inode = NULL;
   PRINT_FOPEN_2("start dir->inode: %d\n", dir_get_sector(start_dir));
   dir_lookup(start_dir,path,&inode);
 
-  PRINT_FOPEN_2("returned inode: %p\n", inode);
-  /* IS WRITING TO DIR FILES ALLOWED? */
-  return file_open (inode);
+  return file_open(inode);
 }
+
+/* Opens a file or directory at PATH with base directory
+   START_DIR. Returns a new file descriptor table entry,
+   which indicates the type of object */
+union fd_content
+filesys_open (struct dir *start_dir, const char *path, bool *is_dir)
+{         
+  struct inode *inode = NULL;
+  PRINT_FOPEN_2("start dir->inode: %d\n", dir_get_sector(start_dir));
+  dir_lookup(start_dir,path,&inode);
+
+  union fd_content content;
+  content.file = NULL;
+
+  if (inode == NULL)
+    return content;
+
+  if (inode_isdir(inode)) {
+    content.dir = dir_open(inode);
+    *is_dir = true;
+  }  
+  else {
+    content.file = file_open(inode);
+    *is_dir = false;
+  }
+  return content;
+}
+
 
 /* Deletes the file at PATH.
    Returns true if successful, false on failure.

@@ -532,3 +532,9 @@ dir_is_empty(struct inode *inode){
   }
   return true;
 }
+
+int 
+dir_get_inumber(struct dir *dir) 
+{
+  return (int) inode_get_sector(dir->inode);
+}

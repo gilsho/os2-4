@@ -16,7 +16,10 @@ void filesys_init (bool format);
 void filesys_done (void);
 bool filesys_create (struct dir *start_dir, 
 	const char *name, off_t initial_size, bool is_dir); 
-struct file *filesys_open (struct dir *start_dir, const char *name);
+
+union fd_content filesys_open (struct dir *start_dir, const char *name, bool *is_dir);
+struct file *filesys_open_file (struct dir *start_dir, const char *name);
+
 bool filesys_remove (struct dir *start_dir, const char *path); 
 struct dir *filesys_open_dir(struct dir *start_dir, const char *path);
 

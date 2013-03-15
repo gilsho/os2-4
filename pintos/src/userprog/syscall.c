@@ -292,27 +292,35 @@ bool sys_remove(int *stack, uint32_t *eax)
 	return true;		
 }
 
-/* Open a file. */
+/* Open a file or directory. */
 bool sys_open(int *stack, uint32_t *eax)
 {
-	const char *name = (const char *) pop_arg(&stack);
+	const char *path = (const char *) pop_arg(&stack);
 
 	int fd = -1;
-	struct file *f = NULL;
+	union fd_content content;
+	bool is_dir;
 
-  if (!valid_str(name, PGSIZE))
+  if (!valid_str(path, PGSIZE))
     return false;
 
-	if(strnlen(name, PGSIZE) > 0){
+	if(strnlen(path, PGSIZE) > 0){
 		lock_acquire(&lock_filesys);
-		f = process_open_file(name);
+		content = process_fd_open(path, &is_dir);
 		lock_release(&lock_filesys);
+
+		/* add a new file descriptor to the thread's fd list */
+		if (content.file != NULL)
+		{
+			enum fd_type type;
+			if (is_dir)
+				type = FD_DIR;
+			else
+				type = FD_FILE;
+			fd = process_fd_add(content, type);
+		}
 	}
-	
-	/* add a new file descriptor to the thread's fd list */
-	if (f != NULL)
-	  fd = process_add_file_desc(f);
-	
+
 	/* push syscall result to the user program */
   memcpy(eax, &fd, sizeof(uint32_t));
 	
@@ -324,7 +332,7 @@ bool sys_filesize(int *stack, uint32_t *eax)
 {
 	int fd = pop_arg(&stack);
 	
-	struct file *file = process_get_file_desc(fd);
+	struct file *file = process_fd_get_file(fd);
 	if (file == NULL)
 	  return false;
 	
@@ -370,7 +378,7 @@ bool sys_read(int *stack, uint32_t *eax)
 	else
 	{
 	  /* check for invalid file or STDOUT */
-	  struct file *file = process_get_file_desc(fd);
+	  struct file *file = process_fd_get_file(fd);
 	  if (file == NULL || fd == 1)
 	  {
 	    result = false;
@@ -412,7 +420,7 @@ bool sys_write(int *stack, uint32_t *eax)
 	}
 	else {
 	  /* check for invalid file or STDIN */
-	  struct file *file = process_get_file_desc(fd);
+	  struct file *file = process_fd_get_file(fd);
 	  if (file == NULL || fd == 0 || file_is_dir(file))
 	  {
 	    result = false;
@@ -437,7 +445,7 @@ bool sys_seek(int *stack)
 	int fd = pop_arg(&stack);
 	unsigned new_pos = pop_arg(&stack);
 	
-	struct file *file = process_get_file_desc(fd);
+	struct file *file = process_fd_get_file(fd);
 	if (file == NULL)
 	  return false;
 
@@ -453,7 +461,7 @@ bool sys_tell(int *stack, uint32_t *eax)
 {
 	int fd = pop_arg(&stack);
 	
-	struct file *file = process_get_file_desc(fd);
+	struct file *file = process_fd_get_file(fd);
 	if (file == NULL)
 	  return false;
 	
@@ -472,21 +480,17 @@ bool sys_tell(int *stack, uint32_t *eax)
 /* Close a file. */
 bool sys_close(int *stack)
 {
-	int fd = pop_arg(&stack);
-	
+	int fd = (int) pop_arg(&stack);
+
 	/* return false is file not found or 
 	   user tries to close STDIN/STDOUT */
-	struct file *file = process_fd_close(fd);
-	if (file == NULL || fd < 2)
+	if (fd < 2)
 	  return false;
-	
-	lock_acquire(&lock_filesys);
-	file_close (file);
-	lock_release(&lock_filesys);
-	
-	process_remove_file_desc(fd);
-	
-	return true;	
+
+	bool success;
+	success = process_fd_close(fd);
+	process_fd_remove(fd);
+	return success;	
 }
 
 bool sys_chdir(int *stack, uint32_t *eax)
@@ -540,16 +544,17 @@ bool sys_isdir(int *stack, uint32_t *eax)
 
 bool sys_inumber(int *stack, uint32_t *eax)
 {
-	int fd = (int)pop_arg(&stack);
-	//make int process_fd_inumber(void);
-	struct file *file = process_get_file_desc(fd);
-	int result = 0;
-	if(file == NULL) 
-		result = 0;
-	else
-		result = file_get_inumber(file);
+	int fd = (int) pop_arg(&stack);
 
-	memcpy(eax, &result, sizeof(uint32_t));
+	if (fd < 2)
+		return false;
+
+	int inumber = process_fd_inumber(fd);
+
+	if (inumber < 0)
+		return false;
+
+	memcpy(eax, &inumber, sizeof(uint32_t));
 	return true;
 }
 

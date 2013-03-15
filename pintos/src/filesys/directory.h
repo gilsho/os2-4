@@ -25,6 +25,7 @@ struct dir *dir_open_root (void);
 struct dir *dir_reopen (struct dir *);
 void dir_close (struct dir *);
 struct inode *dir_get_inode (struct dir *);
+int dir_get_inumber(struct dir *dir);
 block_sector_t dir_get_sector(struct dir *);
 
 /* Reading and writing. */
@@ -34,11 +35,8 @@ bool dir_remove (struct dir *, const char *name);
 bool dir_readdir (struct dir *, char name[NAME_MAX + 1]);
 
 void dir_init(block_sector_t sector);
-
 bool dir_create (struct dir *parent_dir, block_sector_t sector);
-
 bool dir_create_root(void);
-
 struct dir* dir_open_file(struct file *file);
 
 

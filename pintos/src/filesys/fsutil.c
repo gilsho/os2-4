@@ -43,7 +43,7 @@ fsutil_cat (char **argv)
   if (root == NULL)
     PANIC("cannot open root dir\n");
 
-  file = filesys_open (root, file_name);
+  file = filesys_open_file (root, file_name);
   if (file == NULL)
     PANIC ("%s: open failed", file_name);
   buffer = palloc_get_page (PAL_ASSERT);
@@ -132,7 +132,7 @@ fsutil_extract (char **argv UNUSED)
           if (!filesys_create (root, file_name, size, false))
             PANIC ("%s: create failed", file_name);
 
-          dst = filesys_open (root, file_name);
+          dst = filesys_open_file (root, file_name);
           if (dst == NULL)
             PANIC ("%s: open failed", file_name);
 
@@ -198,7 +198,7 @@ fsutil_append (char **argv)
     PANIC("cannot open root dir\n");
 
   /* Open source file. */
-  src = filesys_open (root, file_name);
+  src = filesys_open_file (root, file_name);
   if (src == NULL)
     PANIC ("%s: open failed", file_name);
   size = file_length (src);
