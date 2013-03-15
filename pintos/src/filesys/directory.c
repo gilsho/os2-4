@@ -8,10 +8,10 @@
 #include "threads/vaddr.h"
 
 #if (DEBUG & DEBUG_DIR)
-#define DEBUG_ADD        1
+#define DEBUG_ADD        0
 #define DEBUG_REMOVE     1
-#define DEBUG_LOOKUP     1
-#define DEBUG_READDIR    1
+#define DEBUG_LOOKUP     0
+#define DEBUG_READDIR    0
 #else
 #define DEBUG_ADD        0
 #define DEBUG_LOOKUP     0
@@ -216,6 +216,7 @@ dir_lookup (struct dir *start_dir, const char *path,
 
   PRINT_LOOKUP_2("start_dir->inode->sector: %d\n", 
     inode_get_sector(start_dir->inode));
+  /* +1 open_cnt for start_dir */
   struct dir *cur_dir = dir_reopen (start_dir);
 
   PRINT_LOOKUP_2("path: %s\n", path);
@@ -226,6 +227,8 @@ dir_lookup (struct dir *start_dir, const char *path,
   if (len == 0)
   {
     *inode = start_dir->inode;
+    /* -1 open_cnt for start_dir */
+    dir_close(start_dir);
     return true;
   }
 
@@ -246,9 +249,11 @@ dir_lookup (struct dir *start_dir, const char *path,
     PRINT_LOOKUP_2("token %s\n", token);
     if(lookup (cur_dir, token, &e, NULL)) {
       PRINT_LOOKUP_2("token found in cur_dir. sector is: %d\n",e.inode_sector);
+      /* +1 token inode */
       cur_inode = inode_open (e.inode_sector);
     } else {
       PRINT_LOOKUP("token not found in cur_dir\n");
+      /* -1 current directory */
       dir_close(cur_dir);
       return false; /* entry doesn't exist in directory */
     }
@@ -262,88 +267,26 @@ dir_lookup (struct dir *start_dir, const char *path,
       break;
     }
 
+    /* +0 subdirectory */
     cur_dir = dir_open(cur_inode);
 
     /* check if trying to descend into a file */
-    if (cur_dir == NULL)
+    if (cur_dir == NULL) {
+      inode_close(cur_inode);
       return false;
+    }
     
     token = next_token;
   }
 
   if (inode != NULL)
     *inode = cur_inode;
+  else
+    inode_close(cur_inode);
+  
   return true;
 }
 
-/* Adds a file named NAME to DIR, which must not already contain a
-   file by that name.  The file's inode is in sector
-   INODE_SECTOR.
-   Returns true if successful, false on failure.
-   Fails if NAME is invalid (i.e. too long) or a disk or memory
-   error occurs. */
-   /*
-bool
-dir_add (struct dir *start_dir, const char *path, block_sector_t inode_sector)
-{
-  PRINT_ADD_2("start_dir->inode->sector: %d\n", inode_get_sector(start_dir->inode));
-  PRINT_ADD_2("inode_sector: %d\n", inode_sector);
-
-  bool success = false;
-  struct inode *inode = NULL;
-  char *parent_path = NULL;
-  char *name        = NULL;
-
-  ASSERT (start_dir != NULL);
-  ASSERT (path != NULL);
-
-
-  if (*path == '\0')
-    goto done; 
-
-
-  if (!split_path(path, &parent_path, &name))
-    goto done;
-
-
-
-  if (!dir_lookup(start_dir, parent_path, &inode))
-    goto done;
-
-  if (strnlen(name, PGSIZE) > NAME_MAX)
-    goto done;
-
-  PRINT_ADD_2("new inode->sector: %d\n", inode_get_sector(inode));
-
-
-  struct dir *parent_dir = dir_open(inode);
-  if (parent_dir == NULL)
-  {
-    PRINT_ADD("unable to open parent dir\n");
-    inode = NULL;
-    goto done;
-  }
-
-  PRINT_ADD_2("before add entry -> start_dir->inode->sector: %d\n", 
-    inode_get_sector(start_dir->inode));
-  PRINT_ADD_2("before add entry -> parent_dir->inode->sector: %d\n", 
-    inode_get_sector(parent_dir->inode));
-
-  if (!add_entry(parent_dir, name, inode_sector))
-    goto done;
-
-
-  success = true;
-
-  done:
-    if (parent_path != NULL)
-      free(parent_path);
-    if (name != NULL)
-      free(name);
-    return success;
-}
-
-*/
 
 /* adds a directory entry to DIR with NAME
    at i-number/sector INODE_SECTOR */
@@ -381,59 +324,6 @@ dir_add(struct dir *parent_dir, const char *name, block_sector_t inode_sector)
   return success;
 }
 
-/* Removes any entry for NAME in DIR.
-   Returns true if successful, false on failure,
-   which occurs only if there is no file with the given NAME. */
-/*bool
-dir_remove (struct dir *start_dir, const char *path) 
-{
-  bool success = false;
-  struct inode *inode = NULL;
-  char *parent_path = NULL;
-  char *name        = NULL;
-
-  ASSERT (start_dir != NULL);
-  ASSERT (path != NULL);
-
-
-
-  if (*path == '\0')
-    return false;
-
-  PRINT_REMOVE_2("start dir: %p\n", start_dir);
-
-  if (!split_path(path, &parent_path, &name))
-    return false;
-
-  if (strnlen(name, PGSIZE) > NAME_MAX)
-    goto done;
-
-  if (!dir_lookup(start_dir, parent_path, &inode))
-    goto done;
-
-
-  struct dir *parent_dir = dir_open(inode);
-  if (parent_dir == NULL)
-  {
-    inode = NULL;
-    goto done;
-  }
-
-  if (!remove_entry(parent_dir, name))
-    goto done;
-
-  success = true;
-
-  done:
-    if (parent_path != NULL)
-      free(parent_path);
-    if (name != NULL)
-      free(name);
-    if (inode != NULL)
-      inode_close(inode);
-    return success;
-}*/
-
 bool
 dir_remove(struct dir *dir, const char *name)
 {
@@ -446,18 +336,18 @@ dir_remove(struct dir *dir, const char *name)
     return false;
 
   /* Find directory entry. */
-  PRINT_REMOVE("HERE2\n");
+  PRINT_REMOVE("milestone 1\n");
   if (!lookup (dir, name, &e, &ofs))
     goto done;
 
   /* Open inode. */
-  PRINT_REMOVE("HERE3\n");
+  PRINT_REMOVE("milestone 2\n");
 
   inode = inode_open (e.inode_sector);
   if (inode == NULL || (inode_isdir(inode) && !dir_is_empty(inode)))
     goto done;
 
-  PRINT_REMOVE("HERE4\n");
+  PRINT_REMOVE("milestone 3\n");
   /* Erase directory entry. */
   e.in_use = false;
   if (inode_write_at (dir->inode, &e, sizeof e, ofs) != sizeof e) 
@@ -465,11 +355,11 @@ dir_remove(struct dir *dir, const char *name)
 
   /* Remove inode. */
   inode_remove (inode);
-  inode = NULL;
 
   success = true;
-  PRINT_REMOVE("HERE5\n");
+  PRINT_REMOVE("milestone 4\n");
 
+  PRINT_REMOVE_2("inode: %p\n",inode);
  done:
   if (inode != NULL)
     inode_close (inode);

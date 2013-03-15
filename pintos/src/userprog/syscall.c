@@ -298,27 +298,14 @@ bool sys_open(int *stack, uint32_t *eax)
 	const char *path = (const char *) pop_arg(&stack);
 
 	int fd = -1;
-	union fd_content content;
-	bool is_dir;
 
   if (!valid_str(path, PGSIZE))
     return false;
 
 	if(strnlen(path, PGSIZE) > 0){
 		lock_acquire(&lock_filesys);
-		content = process_fd_open(path, &is_dir);
+		fd = process_fd_open(path);
 		lock_release(&lock_filesys);
-
-		/* add a new file descriptor to the thread's fd list */
-		if (content.file != NULL)
-		{
-			enum fd_type type;
-			if (is_dir)
-				type = FD_DIR;
-			else
-				type = FD_FILE;
-			fd = process_fd_add(content, type);
-		}
 	}
 
 	/* push syscall result to the user program */
@@ -487,10 +474,7 @@ bool sys_close(int *stack)
 	if (fd < 2)
 	  return false;
 
-	bool success;
-	success = process_fd_close(fd);
-	process_fd_remove(fd);
-	return success;	
+	return process_fd_close(fd);
 }
 
 bool sys_chdir(int *stack, uint32_t *eax)

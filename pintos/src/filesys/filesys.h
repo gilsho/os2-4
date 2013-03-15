@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include "filesys/off_t.h"
 #include "filesys/directory.h"
+#include "userprog/process.h"
 
 /* Sectors of system file inodes. */
 #define FREE_MAP_SECTOR 0       /* Free map file inode sector. */
@@ -17,7 +18,9 @@ void filesys_done (void);
 bool filesys_create (struct dir *start_dir, 
 	const char *name, off_t initial_size, bool is_dir); 
 
-union fd_content filesys_open (struct dir *start_dir, const char *name, bool *is_dir);
+union fd_content 
+filesys_open (struct dir *start_dir, const char *path, enum fd_type *type);
+
 struct file *filesys_open_file (struct dir *start_dir, const char *name);
 
 bool filesys_remove (struct dir *start_dir, const char *path); 

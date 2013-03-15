@@ -130,7 +130,7 @@ void process_free_children (struct process_info* info);
 bool initialize_process_info(struct process_info **child_info_ptr);
 void process_set_init_data(struct process_init_data *init_data, char *args_copy);
 void release_children_locks(struct process_info *info, void* aux UNUSED);
-
+int process_fd_add(union fd_content content, enum fd_type type);
 
 struct file_desc* process_fd_get(int fd);
 void process_fd_close_all(struct process_info *info);
@@ -1018,24 +1018,6 @@ process_fd_get_dir(int fd)
   return file_desc->content.dir;
 }
 
-/* Removes the given open file from current threads list of open files */
-void 
-process_fd_remove(int fd)
-{
-  struct process_info *info = thread_current()->process_info;
-  struct list *fd_list = &(info->fd_list);
-  struct list_elem *e;
-  for (e = list_begin (fd_list); e != list_end (fd_list); e = list_next (e)){
-    struct file_desc *desc = list_entry(e,struct file_desc, elem);
-    if (desc->fd == fd) {
-      list_remove(e);
-      free(desc);
-      return;
-    }
-  }
-}
-
-
 bool process_chdir(const char *path)
 {
   struct thread *t = thread_current();
@@ -1113,6 +1095,10 @@ process_fd_close(int fd)
     file_close(desc->content.file);
   else
     dir_close(desc->content.dir);
+
+  list_remove(&desc->elem);
+  free(desc);
+
   return true;
 }
 
@@ -1152,13 +1138,14 @@ process_set_wdir(struct dir *wdir)
   thread_current()->wdir = wdir;
 }
 
-union fd_content 
-process_fd_open(const char *path, bool *is_dir)
+int
+process_fd_open(const char *path)
 {
+  enum fd_type type;
   struct dir* start_dir = process_get_start_dir(path);
-  union fd_content content = filesys_open (start_dir, path, is_dir);
+  union fd_content content = filesys_open (start_dir, path, &type);
   dir_close(start_dir);
-  return content;
+  return process_fd_add(content, type);
 }
 
 int 

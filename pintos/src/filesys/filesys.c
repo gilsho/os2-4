@@ -12,10 +12,10 @@
 #include "threads/vaddr.h"
 
 #if (DEBUG & DEBUG_FILESYS)
-#define DEBUG_FCREATE       1
-#define DEBUG_SPLIT         1
-#define DEBUG_FOPEN         1
-#define DEBUG_FOPEN_DIR     1
+#define DEBUG_FCREATE       0
+#define DEBUG_SPLIT         0
+#define DEBUG_FOPEN         0
+#define DEBUG_FOPEN_DIR     0
 #define DEBUG_FREMOVE       1
 #else
 #define DEBUG_FCREATE       0
@@ -217,7 +217,7 @@ filesys_open_file (struct dir *start_dir, const char *path)
    START_DIR. Returns a new file descriptor table entry,
    which indicates the type of object */
 union fd_content
-filesys_open (struct dir *start_dir, const char *path, bool *is_dir)
+filesys_open (struct dir *start_dir, const char *path, enum fd_type *type)
 {         
   struct inode *inode = NULL;
   PRINT_FOPEN_2("start dir->inode: %d\n", dir_get_sector(start_dir));
@@ -229,19 +229,21 @@ filesys_open (struct dir *start_dir, const char *path, bool *is_dir)
   if (inode == NULL)
     return content;
 
-  PRINT_FOPEN_2("inode->sector: %d\n", inode->sector);
+  PRINT_FOPEN_2("inode->sector: %d\n", inode_get_sector(inode));
   PRINT_FOPEN_2("is_dir: %d\n", (int) inode_isdir(inode));
   
-  if (inode_is_removed(dir_get_inode(start_dir)))
+  if (inode_is_removed(dir_get_inode(start_dir))) {
+    inode_close(inode);
     return content;
+  }
 
   if (inode_isdir(inode)) {
     content.dir = dir_open(inode);
-    *is_dir = true;
+    *type = FD_DIR;
   }  
   else {
     content.file = file_open(inode);
-    *is_dir = false;
+    *type = FD_FILE;
   }
   return content;
 }
@@ -260,6 +262,7 @@ filesys_remove (struct dir *start_dir, const char *path)
   struct inode *inode = NULL;
   char *parent_path = NULL;
   char *name        = NULL;
+  struct dir *parent_dir = NULL;
 
   ASSERT (start_dir != NULL);
   ASSERT (path != NULL);
@@ -278,13 +281,9 @@ filesys_remove (struct dir *start_dir, const char *path)
   if (!dir_lookup(start_dir, parent_path, &inode))
     goto done;
 
-
-  struct dir *parent_dir = dir_open(inode);
+  parent_dir = dir_open(inode);
   if (parent_dir == NULL)
-  {
-    inode = NULL;
     goto done;
-  }
 
   if (!dir_remove(parent_dir, name))
     goto done;
@@ -296,7 +295,10 @@ filesys_remove (struct dir *start_dir, const char *path)
       free(parent_path);
     if (name != NULL)
       free(name);
-    if (inode != NULL)
+    
+    if (parent_dir != NULL)
+      dir_close(parent_dir);
+    else if (inode != NULL)
       inode_close(inode);
 
     PRINT_FREMOVE_2("succes: %d\n",success);
@@ -317,6 +319,7 @@ do_format (void)
 }
 
 
+/* returns an open inode */
 struct dir *
 filesys_open_dir(struct dir *start_dir, const char *path)
 {

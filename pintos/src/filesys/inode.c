@@ -19,6 +19,7 @@
 #define DEBUG_WRITE         0
 #define DEBUG_FREE_MAP      0
 #define DEBUG_FREE_SECTOR   0
+#define DEBUG_ICLOSE        1
 #else
 #define DEBUG_EXTEND        0
 #define DEBUG_CREATE        0
@@ -27,6 +28,7 @@
 #define DEBUG_WRITE         0
 #define DEBUG_FREE_MAP      0
 #define DEBUG_FREE_SECTOR   0
+#define DEBUG_ICLOSE        0
 #endif
 
 #if DEBUG_EXTEND
@@ -75,6 +77,14 @@
 #else
 #define PRINT_FREE_MAP(X,Y) do {} while(0)
 #define PRINT_FREE_MAP_2(X,Y,Z) do {} while(0)
+#endif
+
+#if DEBUG_ICLOSE
+#define PRINT_ICLOSE(X) {printf("(inode-close) "); printf(X);}
+#define PRINT_ICLOSE_2(X,Y) {printf("(inode-close) "); printf(X,Y);}
+#else
+#define PRINT_ICLOSE(X,Y) do {} while(0)
+#define PRINT_ICLOSE_2(X,Y) do {} while(0)
 #endif
 
 #if DEBUG_FREE_SECTOR
@@ -428,10 +438,11 @@ inode_open (block_sector_t sector)
     {
       inode = list_entry (e, struct inode, elem);
 
-      PRINT_OPEN_2("inode: %p\n", inode);
-      PRINT_OPEN_2("inode_sector: %d\n", inode->sector);
+      /*PRINT_OPEN_2("inode: %p\n", inode);
+      PRINT_OPEN_2("inode_sector: %d\n", inode->sector);*/
       if (inode->sector == sector) 
         {
+          /*PRINT_OPEN("inode in memory\n");*/
           inode_reopen (inode);
           return inode; 
         }
@@ -448,8 +459,9 @@ inode_open (block_sector_t sector)
   inode->open_cnt = 1;
   inode->deny_write_cnt = 0;
   inode->removed = false;
-  /* WE DONT NEED TO DO THIS??? */
-  /*block_read (fs_device, inode->sector, &inode->data);*/
+
+  PRINT_OPEN_2("open_cnt: (after increment) %d\n",inode->open_cnt);
+
   return inode;
 }
 
@@ -491,12 +503,17 @@ inode_is_removed(struct inode * inode)
 void
 inode_close (struct inode *inode) 
 {
+
   /* Ignore null pointer. */
   if (inode == NULL)
     return;
 
+  inode->open_cnt--;
+  PRINT_ICLOSE_2("sector: %d\n",inode->sector);
+  PRINT_ICLOSE_2("open_cnt: %d\n",inode->open_cnt);
+
   /* Release resources if this was the last opener. */
-  if (--inode->open_cnt == 0)
+  if (inode->open_cnt == 0)
     {
       /* Remove from inode list and release lock. */
       list_remove (&inode->elem);
