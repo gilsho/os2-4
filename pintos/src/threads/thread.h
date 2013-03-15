@@ -110,6 +110,7 @@ struct thread
     struct process_info *process_info;  /* Process information */
 #endif
     struct dir *wdir;
+    int64_t wakeup_tick;
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */

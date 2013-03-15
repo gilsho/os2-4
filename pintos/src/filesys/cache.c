@@ -4,8 +4,28 @@
 #include "filesys/cache.h"
 #include "filesys/filesys.h"
 #include "threads/malloc.h"
+#include "devices/timer.h"
+#include "threads/thread.h"
+#include "threads/synch.h"
+
+
+#if (DEBUG & DEBUG_CACHE)
+#define DEBUG_WRITE_BEHIND       0
+#else
+#define DEBUG_WRITE_BEHIND       0
+#endif
+
+#if DEBUG_WRITE_BEHIND
+#define PRINT_WRITE_BEHIND(X) {printf("(write-behind) "); printf(X);}
+#define PRINT_WRITE_BEHIND_2(X,Y) {printf("(write-behind) "); printf(X,Y);}
+#else
+#define PRINT_WRITE_BEHIND(X) do {} while(0)
+#define PRINT_WRITE_BEHIND_2(X,Y) do {} while(0)
+#endif
 
 #define CACHE_LEN 50
+
+#define CACHE_WAIT_TIME 10
 
 struct cache_sector
 {
@@ -33,6 +53,7 @@ struct cache_entry
 static struct hash cache_hash;
 static struct cache_sector cache_array[CACHE_LEN];
 static struct list list_data;
+static struct lock lock_map;
 /*static struct list list_meta;*/
 
 
@@ -48,6 +69,7 @@ struct cache_entry *cache_get_entry(block_sector_t sector_idx);
 bool cache_cmp(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
 unsigned cache_hash_func(const struct hash_elem *e, void *aux UNUSED);
 void hash_clean_entry(struct hash_elem *he, void *aux UNUSED);
+void cache_write_behind_loop(void *_cache_wait);
 
 
 /* intialize the cache structures */
@@ -57,8 +79,23 @@ cache_init(void)
 	hash_init(&cache_hash, &cache_hash_func, &cache_cmp, NULL);	/* hash table for fast lookup	*/
 	list_init(&list_data);	/* list of cached data sectors */
 	/*list_init(&list_meta);*/	/* list of cached meta-data sectors	*/
+	lock_init(&lock_map);
+	thread_create ("flusher", 0, &cache_write_behind_loop, (void *)CACHE_WAIT_TIME); 
 }
 
+void
+cache_write_behind_loop(void *_cache_wait){
+	int cache_wait = (int)_cache_wait;
+	PRINT_WRITE_BEHIND_2("cache wait is :%d", cache_wait);
+	while(true){
+
+		timer_msleep(cache_wait);
+		PRINT_WRITE_BEHIND("I am about to flush the cache!\n");
+		lock_acquire(&lock_map);
+		cache_flush();
+		lock_release(&lock_map);
+	}
+}
 
 /* flush the dirty sectors in cache to disk */
 void
@@ -160,23 +197,31 @@ void
 cache_read (block_sector_t sector_idx, void *buffer, 
 								 int sector_ofs, int chunk_size, bool meta)
 {
+	lock_acquire(&lock_map);
+		
 	struct cache_entry *ce = cache_put(sector_idx, meta);
 	ASSERT(ce->slot >= 0 && ce->slot < CACHE_LEN);
 	ASSERT(sector_ofs + chunk_size <= BLOCK_SECTOR_SIZE);
 	memcpy (buffer, cache_array[ce->slot].data + sector_ofs, chunk_size);
 	cache_update_lru(ce, meta);
+
+	lock_release(&lock_map);
 }
 
 void 
 cache_write (block_sector_t sector_idx, const void *buffer, 
 								 int sector_ofs, int chunk_size, bool meta)
 {
+	lock_acquire(&lock_map);
+
 	struct cache_entry *ce = cache_put(sector_idx, meta);
 	ASSERT(ce->slot >= 0 && ce->slot < CACHE_LEN);
 	ASSERT(sector_ofs + chunk_size <= BLOCK_SECTOR_SIZE);
 	memcpy (cache_array[ce->slot].data + sector_ofs, buffer, chunk_size);
 	cache_set_dirty(ce, true);
 	cache_update_lru(ce, meta);
+
+	lock_release(&lock_map);
 }
 
 
