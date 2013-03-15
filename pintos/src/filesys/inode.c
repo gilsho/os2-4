@@ -18,7 +18,7 @@
 #define DEBUG_READ          0
 #define DEBUG_WRITE         0
 #define DEBUG_FREE_MAP      0
-#define DEBUG_FREE_SECTOR   0
+#define DEBUG_FREE_SECTOR   1
 #define DEBUG_ICLOSE        1
 #else
 #define DEBUG_EXTEND        0
@@ -349,7 +349,8 @@ inode_free_sectors(struct inode *inode, int start_block,
   PRINT_FREE_SECTOR_2("inode_length: %d\n",inode_length(inode));
   PRINT_FREE_SECTOR_2("start_block: %d\n",start_block);
   PRINT_FREE_SECTOR_2("end block: %d\n",end_block);
-
+  if(inode_length(inode) <= 0)
+    return;
   int cur_block;
   for (cur_block = end_block; cur_block >= start_block; cur_block--)
   {
@@ -522,14 +523,17 @@ inode_close (struct inode *inode)
       if (inode->removed) 
         {
           /* Should this be on stack? Malloc? */
+          PRINT_ICLOSE_2("WE ARE FREEING %d\n",inode->sector);
           block_sector_t end_block = byte_to_block(inode_length(inode));
           inode_free_sectors(inode,0,end_block);
+
 
           free_map_release (inode->sector, 1);
         }
 
       free (inode); 
     }
+
 }
 
 /* Marks INODE to be deleted when it is closed by the last caller who
@@ -828,3 +832,9 @@ inode_get_sector(struct inode *inode)
 {
   return inode->sector;
 }
+
+int inode_get_count(struct inode *inode){
+  return inode->open_cnt;
+}
+
+

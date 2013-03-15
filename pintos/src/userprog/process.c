@@ -950,6 +950,8 @@ process_fd_get(int fd)
 
 int process_fd_add(union fd_content content, enum fd_type type)
 {
+  if(content.file == NULL)
+    return -1;
   struct process_info *info = thread_current()->process_info;
   struct list *fd_list = &(info->fd_list);
 

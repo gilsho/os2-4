@@ -228,7 +228,7 @@ dir_lookup (struct dir *start_dir, const char *path,
   {
     *inode = start_dir->inode;
     /* -1 open_cnt for start_dir */
-    dir_close(start_dir);
+    free(cur_dir);
     return true;
   }
 

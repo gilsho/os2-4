@@ -7,6 +7,8 @@
 
 struct bitmap;
 
+
+
 void inode_init (void);
 bool inode_create (block_sector_t, off_t, bool);
 struct inode *inode_open (block_sector_t);
@@ -23,5 +25,7 @@ bool inode_isdir(struct inode *inode);
 block_sector_t inode_get_sector(struct inode *inode);
 void inode_destroy(block_sector_t sector);
 bool inode_is_removed(struct inode *);
+
+int inode_get_count(struct inode *);
 
 #endif /* filesys/inode.h */

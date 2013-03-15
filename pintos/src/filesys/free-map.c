@@ -20,6 +20,7 @@ static struct bitmap *free_map;      /* Free map, one bit per sector. */
 static int num_alloc = 0;
 #define INC_ALLOC(cnt)  (num_alloc+=cnt)
 #define DEC_ALLOC(cnt)  (num_alloc-=cnt)
+#define PRINT_NUM_ALLOC() do {} while(0)
 void free_map_print_num_alloc(void) {
   printf("FREEMAP num_alloc: %d\n", num_alloc);
 }

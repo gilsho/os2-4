@@ -12,7 +12,7 @@
 #include "threads/vaddr.h"
 
 #if (DEBUG & DEBUG_FILESYS)
-#define DEBUG_FCREATE       0
+#define DEBUG_FCREATE       1
 #define DEBUG_SPLIT         0
 #define DEBUG_FOPEN         0
 #define DEBUG_FOPEN_DIR     0
@@ -115,16 +115,18 @@ bool filesys_resolve_path(struct dir* start_dir, const char *path,
   char *parent_path = NULL;
   struct inode *inode = NULL;
   bool success = false;
-  PRINT_SPLIT("HEREEEE0\n");
+  PRINT_SPLIT_2("start dir: %p\n", start_dir);
   if(!split_path(path, &parent_path, name))
     goto done;
 
-  PRINT_SPLIT("HEREEEE\n");
+
   if(!dir_lookup(start_dir, parent_path, &inode))
     goto done;
 
   *parent_dir = dir_open(inode);
-  PRINT_SPLIT("HEREEEE2\n");
+
+  PRINT_SPLIT_2("parent_dir: %p\n", *parent_dir);
+
   if (*parent_dir == NULL)
   {
     goto done;
@@ -140,6 +142,8 @@ bool filesys_resolve_path(struct dir* start_dir, const char *path,
   return success;
 }
 
+
+
 /* Creates a file named NAME with the given INITIAL_SIZE.
    Returns true if successful, false otherwise.
    Fails if a file named NAME already exists,
@@ -148,11 +152,16 @@ bool
 filesys_create (struct dir *start_dir, const char *path, off_t initial_size, bool is_dir) 
 {
   PRINT_FCREATE_2("path: %s\n", path);
+  PRINT_FCREATE_2("milestone 1 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
   /* TODO: CHECK REMOVED FLAG */
   bool success = false;
   block_sector_t inode_sector = 0;
   char *name = NULL;
   struct dir *parent_dir = NULL;
+  /*PRINT_FCREATE_2("start dir 1: %p\n", start_dir);*/
+  start_dir = dir_reopen(start_dir);
+  PRINT_FCREATE_2("milestone 2 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
+
 
   if(dir_lookup(start_dir, path, NULL))
     goto done;
@@ -160,12 +169,12 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
   if(start_dir == NULL || !free_map_allocate (1, &inode_sector))
     goto done;
 
-
+  PRINT_FCREATE_2("milestone 3 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
   if(!filesys_resolve_path(start_dir, path, &parent_dir, &name))
     goto done;
 
+
   PRINT_FCREATE_2("name: %s\n", name);
-  PRINT_FCREATE_2("parent_dir: %p\n", parent_dir);
   /* TAKE THIS OUT */
   ASSERT (name != NULL);
 
@@ -179,17 +188,24 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
     if(!file_create(inode_sector, initial_size))
       goto done;
   }
-
+  PRINT_FCREATE_2("milestone 4 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
   if(!dir_add (parent_dir, name, inode_sector))
     goto done;
 
   success = true;
-      
+
   done:
     if(name != NULL)
       free(name);
-    if(parent_dir != NULL)
+    if(parent_dir != NULL){
       dir_close(parent_dir);
+      parent_dir = NULL;
+    }
+    PRINT_FCREATE_2("milestone 5 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
+    if(start_dir != NULL){
+      dir_close(start_dir);
+      start_dir = NULL;
+    }
     if (!success && inode_sector != 0) {
       inode_destroy(inode_sector);
     }
@@ -207,6 +223,7 @@ struct file*
 filesys_open_file (struct dir *start_dir, const char *path)
 {         
   struct inode *inode = NULL;
+  PRINT_FOPEN_2("path: %s", path);
   PRINT_FOPEN_2("start dir->inode: %d\n", dir_get_sector(start_dir));
   dir_lookup(start_dir,path,&inode);
 
@@ -258,15 +275,21 @@ filesys_open (struct dir *start_dir, const char *path, enum fd_type *type)
 bool
 filesys_remove (struct dir *start_dir, const char *path) 
 {
+  PRINT_FREMOVE_2("milestone 0 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
+
+  PRINT_FREMOVE_2("Removing path: %s\n", path);
   bool success = false;
   struct inode *inode = NULL;
   char *parent_path = NULL;
   char *name        = NULL;
   struct dir *parent_dir = NULL;
 
+  start_dir = dir_reopen(start_dir);
+
   ASSERT (start_dir != NULL);
   ASSERT (path != NULL);
 
+  PRINT_FREMOVE_2("milestone 1 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
 
   /* Check NAME for validity. */
   if (*path == '\0')
@@ -281,25 +304,34 @@ filesys_remove (struct dir *start_dir, const char *path)
   if (!dir_lookup(start_dir, parent_path, &inode))
     goto done;
 
+  PRINT_FREMOVE_2("milestone 2 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
   parent_dir = dir_open(inode);
   if (parent_dir == NULL)
     goto done;
 
+  PRINT_FREMOVE_2("milestone 2.5 count: %d\n", inode_get_count(dir_get_inode(parent_dir)));
+
+  PRINT_FREMOVE("removing from parent dir\n");
   if (!dir_remove(parent_dir, name))
     goto done;
 
   success = true;
 
   done:
+    PRINT_FREMOVE("starting done\n");
     if (parent_path != NULL)
       free(parent_path);
     if (name != NULL)
       free(name);
-    
+    PRINT_FREMOVE("closing start dir\n");
+    if(start_dir != NULL)
+      dir_close(start_dir);
+    PRINT_FREMOVE("closing parent dir\n");
     if (parent_dir != NULL)
       dir_close(parent_dir);
     else if (inode != NULL)
       inode_close(inode);
+
 
     PRINT_FREMOVE_2("succes: %d\n",success);
     return success;
