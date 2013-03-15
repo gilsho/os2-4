@@ -4,9 +4,12 @@
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
+#include <stdio.h>
 
 static struct file *free_map_file;   /* Free map file. */
 static struct bitmap *free_map;      /* Free map, one bit per sector. */
+
+static int num_alloc = 0;
 
 /* Initializes the free map. */
 void
@@ -35,8 +38,13 @@ free_map_allocate (size_t cnt, block_sector_t *sectorp)
       bitmap_set_multiple (free_map, sector, cnt, false); 
       sector = BITMAP_ERROR;
     }
+
   if (sector != BITMAP_ERROR)
     *sectorp = sector;
+  else
+    free_map_print_num_alloc();
+
+  num_alloc += (int) cnt;
   return sector != BITMAP_ERROR;
 }
 
@@ -47,6 +55,7 @@ free_map_release (block_sector_t sector, size_t cnt)
   ASSERT (bitmap_all (free_map, sector, cnt));
   bitmap_set_multiple (free_map, sector, cnt, false);
   bitmap_write (free_map, free_map_file);
+  num_alloc -= (int) cnt;
 }
 
 /* Opens the free map file and reads it from disk. */
@@ -82,4 +91,10 @@ free_map_create (void)
     PANIC ("can't open free map");
   if (!bitmap_write (free_map, free_map_file))
     PANIC ("can't write free map");
+}
+
+void 
+free_map_print_num_alloc() 
+{
+  printf("FREEMAP num_alloc: %d\n", num_alloc);
 }

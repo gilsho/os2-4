@@ -103,6 +103,7 @@ void
 filesys_done (void) 
 {
   cache_flush();
+  free_map_print_num_alloc();
   free_map_close ();
 }
 
@@ -226,6 +227,12 @@ filesys_open (struct dir *start_dir, const char *path, bool *is_dir)
   content.file = NULL;
 
   if (inode == NULL)
+    return content;
+
+  PRINT_FOPEN_2("inode->sector: %d\n", inode->sector);
+  PRINT_FOPEN_2("is_dir: %d\n", (int) inode_isdir(inode));
+  
+  if (inode_is_removed(dir_get_inode(start_dir)))
     return content;
 
   if (inode_isdir(inode)) {
