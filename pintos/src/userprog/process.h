@@ -13,9 +13,6 @@ void process_exit (void);
 void process_activate (void);
 void process_init(void);
 
-int process_add_file_desc(struct file *file);
-struct file* process_get_file_desc(int fd);
-void process_remove_file_desc(int fd);
 struct dir* process_get_wdir(void);
 void process_set_wdir(struct dir *wdir);
 
@@ -29,3 +26,9 @@ bool process_chdir(const char *path);
 
 
 #endif /* userprog/process.h */
+
+int process_fd_add_file(struct file *file);
+int process_fd_add_dir(struct dir *dir);
+struct file* process_fd_get_file(int fd);
+struct dir* process_fd_get_dir(int fd);
+bool process_fd_close(const char *path);

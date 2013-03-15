@@ -42,7 +42,7 @@
 #endif
 
 #if DEBUG_FOPEN_DIR
-#define PRINT_FOPEN_DIR_2(X) {printf("(filesys-create) "); printf(X);}
+#define PRINT_FOPEN_DIR(X) {printf("(filesys-create) "); printf(X);}
 #define PRINT_FOPEN_DIR_2(X,Y) {printf("(filesys-create) "); printf(X,Y);}
 #else
 #define PRINT_FOPEN_DIR(X) do {} while(0)
@@ -153,9 +153,6 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
   char *name = NULL;
   struct dir *parent_dir = NULL;
 
-  struct file *new_file;
-  struct dir *new_dir;
-
   if(dir_lookup(start_dir, path, NULL))
     goto done;
 
@@ -184,7 +181,7 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
 
   if(!dir_add (parent_dir, name, inode_sector))
     goto done;
-  
+
   success = true;
       
   done:

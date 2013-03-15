@@ -476,7 +476,7 @@ bool sys_close(int *stack)
 	
 	/* return false is file not found or 
 	   user tries to close STDIN/STDOUT */
-	struct file *file = process_get_file_desc(fd);
+	struct file *file = process_fd_close(fd);
 	if (file == NULL || fd < 2)
 	  return false;
 	
@@ -515,13 +515,10 @@ bool sys_readdir(int *stack, uint32_t *eax)
 {
 	int fd = (int)pop_arg(&stack);
 	char *name = (char *)pop_arg(&stack);
-	struct file *file = process_get_file_desc(fd);
+	struct dir *dir = process_fd_get_dir(fd);
 	int result = 0;
-	struct dir *dir; 
-	if(file != NULL && file_is_dir(file)){
-		dir = dir_open_file(file);
+	if(dir != NULL) {
 		result = (int)dir_readdir(dir, name);
-		dir_close(dir);
 	}
 
 	memcpy(eax, &result, sizeof(uint32_t));
@@ -531,12 +528,10 @@ bool sys_readdir(int *stack, uint32_t *eax)
 bool sys_isdir(int *stack, uint32_t *eax)
 {
 	int fd = (int)pop_arg(&stack);
-	struct file *file = process_get_file_desc(fd);
+	struct dir *dir = process_fd_get_dir(fd);
 	int result = 0;
-	if(file == NULL)
-		result = 0;
-	else
-		result = file_is_dir(file);
+	if(dir != NULL)
+		result = 1;
 
 	memcpy(eax, &result, sizeof(uint32_t));
 	return true;
@@ -546,6 +541,7 @@ bool sys_isdir(int *stack, uint32_t *eax)
 bool sys_inumber(int *stack, uint32_t *eax)
 {
 	int fd = (int)pop_arg(&stack);
+	//make int process_fd_inumber(void);
 	struct file *file = process_get_file_desc(fd);
 	int result = 0;
 	if(file == NULL) 

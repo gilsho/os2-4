@@ -66,10 +66,22 @@ struct process_init_data
 
 /* This struct is an element in a linked list of file descriptors 
    mapping to open files. */
+
+enum fd_type {
+  FD_FILE,
+  FD_DIR
+};
+
+union fd_content {
+  struct file *file;
+  struct dir *dir;
+};
+
 struct file_desc
 {
   int fd;						      /* the file descriptor associated with the file */
-  struct file *file;			/* a handle to the file struct associated with fd */
+  union fd_content content;			/* a handle to the file struct associated with fd */
+  enum fd_type type;
   struct list_elem elem;	/* a list elem used to embed this struct within a 
                             process' list of active files */
 };
@@ -125,10 +137,15 @@ void process_foreach (struct list *list, process_action_func *func, void *aux);
 void set_parent_dead(struct process_info *info, void* aux UNUSED);
 struct process_info * process_get_info(struct process_info *parent_info, pid_t child_pid);
 void process_free_children (struct process_info* info); 
-bool initialize_process_info(struct process_info **child_info_ptr, struct process_info *parent_info);
+bool initialize_process_info(struct process_info **child_info_ptr);
 void process_set_init_data(struct process_init_data *init_data, char *args_copy);
-void close_open_files(struct process_info *info);
 void release_children_locks(struct process_info *info, void* aux UNUSED);
+
+
+struct file_desc* process_fd_get(int fd);
+void process_fd_close_all(struct process_info *info);
+int process_fd_add(union fd_content content, enum fd_type type);
+void process_fd_remove(int fd);
 
 bool process_chdir(const char *path);
 
@@ -137,7 +154,7 @@ bool process_chdir(const char *path);
 void process_init(void)
 {
   struct process_info *main_info;  
-  bool result = initialize_process_info(&main_info,NULL);
+  bool result = initialize_process_info(&main_info);
   
   ASSERT(result);
   ASSERT(main_info != NULL);
@@ -190,7 +207,7 @@ process_execute (const char *args)
   /* initialize the child process' info struct */
   struct process_info *parent_info = thread_current()->process_info;
   struct process_info *child_info;
-  if (!initialize_process_info(&child_info,parent_info))
+  if (!initialize_process_info(&child_info))
     return -1;
 
   init_data.info = child_info;
@@ -297,24 +314,6 @@ process_close(int status){
   lock_release(&(info->lock));
 }
 
-/* Close all files currently opened by the exiting thread */
-void close_open_files(struct process_info *info){
-   /* close all open files */
-  struct list_elem *e;
-
-  for (e = list_begin (&(info->fd_list)); e != list_end (&(info->fd_list));) {
-    struct list_elem *ne;
-    ne = list_next (e);
-    list_remove(e);
-    struct file_desc *desc = list_entry(e,struct file_desc, elem);
-    lock_acquire(&lock_filesys);
-    file_close(desc->file);
-    lock_release(&lock_filesys);
-    free(desc);
-    e = ne;
-  }
-}
-
 /* Free the current process's resources. */
 void
 process_exit (void)
@@ -342,7 +341,7 @@ process_exit (void)
   struct process_info *info = t->process_info;  
   
   /* Close any files opened by this process */
-  close_open_files(info);
+  process_fd_close_all(info);
 
   /* allow writes to the executable */
   if(!lock_held_by_current_thread(&lock_filesys))
@@ -915,8 +914,7 @@ process_free_children (struct process_info* parent_info)
 
 /* Initialize the process info struct for a new process. */
 bool
-initialize_process_info(struct process_info **child_info_ptr, 
-                        struct process_info *parent_info)
+initialize_process_info(struct process_info **child_info_ptr)
 {
   struct process_info *child_info = *child_info_ptr;
   
@@ -944,29 +942,9 @@ initialize_process_info(struct process_info **child_info_ptr,
 }
 
 /* Adds a file descriptor to the current process' list */
-int 
-process_add_file_desc(struct file *file)
-{
-  struct process_info *info = thread_current()->process_info;
-  struct list *fd_list = &(info->fd_list);
 
-  struct file_desc *desc = malloc(sizeof(struct file_desc));
-  if (desc == NULL)
-    return -1;
-
-  desc->fd = info->next_fd;
-  info->next_fd++;
-  desc->file = file;
-
-  list_push_back(fd_list,&(desc->elem));
-  return desc->fd;
-  
-}
-
-/* Retrieves the file associated with a given file descriptor for the 
-   current thread*/
-struct file* 
-process_get_file_desc(int fd)
+struct file_desc* 
+process_fd_get(int fd)
 {
   struct process_info *info = thread_current()->process_info;
   struct list *fd_list = &(info->fd_list);
@@ -975,16 +953,70 @@ process_get_file_desc(int fd)
   for (e = list_begin (fd_list); e != list_end (fd_list); e = list_next (e)){
     struct file_desc *desc = list_entry(e,struct file_desc, elem);
     if (desc->fd == fd) {
-      return desc->file;
+      return desc;
     }
   }
   
   return NULL;
 }
 
+int process_fd_add(union fd_content content, enum fd_type type)
+{
+  struct process_info *info = thread_current()->process_info;
+  struct list *fd_list = &(info->fd_list);
+
+  struct file_desc *desc = malloc(sizeof(struct file_desc));
+  if (desc == NULL)
+    return -1;
+
+  desc->type = type;
+  desc->fd = info->next_fd;
+  info->next_fd++;
+  desc->content = content;
+
+  list_push_back(fd_list,&(desc->elem));
+  return desc->fd;
+}
+
+int 
+process_fd_add_file(struct file *file)
+{
+  union fd_content content;
+  content.file = file;
+  return process_fd_add(content, FD_FILE);
+}
+
+int 
+process_fd_add_dir(struct dir *dir)
+{
+  union fd_content content;
+  content.dir = dir;
+  return process_fd_add(content, FD_DIR);
+}
+
+/* Retrieves the file associated with a given file descriptor for the 
+   current thread*/
+struct file* 
+process_fd_get_file(int fd)
+{
+  struct file_desc *file_desc = process_fd_get(fd);
+  if (file_desc == NULL || file_desc->type != FD_FILE)
+    return NULL;
+  return file_desc->content.file;
+}
+
+struct dir* 
+process_fd_get_dir(int fd)
+{
+  struct file_desc *file_desc = process_fd_get(fd);
+  if (file_desc == NULL || file_desc->type != FD_DIR)
+    return NULL;
+  return file_desc->content.dir;
+}
+
 /* Removes the given open file from current threads list of open files */
 void 
-process_remove_file_desc(int fd)
+process_fd_remove(int fd)
 {
   struct process_info *info = thread_current()->process_info;
   struct list *fd_list = &(info->fd_list);
@@ -1056,12 +1088,46 @@ process_create_file(const char *path, off_t size, bool is_dir){
   return result;
 }
 
-bool
 process_remove_file(const char *path){
   struct dir *start_dir = process_get_start_dir(path);
   bool result = filesys_remove(start_dir, path);
   dir_close(start_dir);
   return result;
+}
+
+process_fd_close(int fd) 
+{
+  struct file_desc* file_desc = process_fd_get(int fd);
+  if (desc->type == FD_FILE)
+    file_close(desc->content.file);
+  else
+    dir_close(desc->content.dir);
+}
+
+
+
+/* Close all files currently opened by the exiting thread */
+void process_fd_close_all(struct process_info *info)
+{
+   /* close all open files */
+  struct list_elem *e;
+
+  for (e = list_begin (&(info->fd_list)); e != list_end (&(info->fd_list));) {
+    struct list_elem *ne;
+    ne = list_next (e);
+    list_remove(e);
+    struct file_desc *desc = list_entry(e,struct file_desc, elem);
+    lock_acquire(&lock_filesys);
+
+    if (desc->type == FD_FILE)
+      file_close(desc->content.file);
+    else
+      dir_close(desc->content.dir);
+
+    lock_release(&lock_filesys);
+    free(desc);
+    e = ne;
+  }
 }
 
 struct dir* 
