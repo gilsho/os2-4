@@ -44,8 +44,13 @@ Our inode structure contains 12 direct sector pointers, 1 indirect block
 pointer, and 1 doubly-indirect pointer. The indirect block contains 128 
 direct sector pointers. The doubly-indirect block contains 128 indirect 
 block pointers, which each contain 128 sector pointers. In total, there 
-are 12 + 128 + 128^2 data sectors, which is 8460288 bytes of data. If we
-include the overheard of allocating metadata, there are 130 additional
+are 12 + 128 + 128^2 data sectors. Since each data sector is 512 bytes, the maximum size of a file is: 
+
+(12 + 128 + 128^2) * (512) = 8460288 bytes = 8262 KB
+
+
+
+If we include the overheard of allocating metadata, there are 130 additional
 sectors (1 for the inode, 129 for indirect pointer tables), which
 brings the total filesize to 8526848 bytes.
 
@@ -183,12 +188,13 @@ ordered list of
 >> C3: Describe your implementation of write-behind.
 
 When the cache is initialized, a dedicated 'cleaner' thread is
-spawned that periodically iterates over the cache entries and writes
-dirty entries.
+spawned. This thread runs in a continuous while loop. It sleeps for 30 seconds, 
+then wakes up and flushes the entire cache by writing all contents to disk. It's
+repeats this procedure for the entire duration of the program.
 
 >> C4: Describe your implementation of read-ahead.
 
-Fuck.
+Fuck. My. Life.
 
 ---- SYNCHRONIZATION ----
 
@@ -196,8 +202,27 @@ Fuck.
 >> buffer cache block, how are other processes prevented from evicting
 >> that block?
 
+Firstly, since the eviction policy is LRU, once a block is about to 
+be read from or written to, it is placed to the back of the queue of blocks
+eligible for eviction. Hence, a block that is actively being read
+from or written to is unlikely to be chosen for eviction.
+
+When a process is about to read from or write to a buffer cache block,
+that process increments the 'num_accessors' variable on that cache block.
+If another process decides to evict a certain block, it must wait until the 
+number of accessors for that block is zero. Thus it is blocked while other 
+processes are actively reading from and writing to the sector. Note, however
+that having to wait here is highly unlikely and, indeed, will only happen when
+every block in the cache is being used by some process.
+
+
 >> C6: During the eviction of a block from the cache, how are other
 >> processes prevented from attempting to access the block?
+
+During eviction of a block, we set a flag on that block 'io-busy' to
+be true. Whenever a process tries to access a block it must check the
+io-busy flag. If it is set to true, the process must wait until the
+eviction is complete. 
 
 ---- RATIONALE ----
 
@@ -205,11 +230,20 @@ Fuck.
 >> and workloads likely to benefit from read-ahead and write-behind.
 
 Buffer caching:
+Repetitive accesses of the same memory location will benefit from
+buffer caching, e.g. frequently changing the state of some character
+in a game
 
 Read-ahead:
+Sequential access of a file would benefit from read-ahead. For 
+example playing a music or video file, where you know you are
+going to want to read later blocks in the file.
 
 Write-behind:
-
+Any workload which wanted to not lose all its data after an unexpected
+system crash would benefit from write-behind, because the process could
+be assured that at most, it only lost the most recent 30 seconds of 
+data.
 
 
 			   SURVEY QUESTIONS
