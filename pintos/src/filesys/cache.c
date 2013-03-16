@@ -11,8 +11,10 @@
 
 #if (DEBUG & DEBUG_CACHE)
 #define DEBUG_WRITE_BEHIND       0
+#define DEBUG_CINIT							 1
 #else
 #define DEBUG_WRITE_BEHIND       0
+#define DEBUG_CINIT							 0
 #endif
 
 #if DEBUG_WRITE_BEHIND
@@ -23,13 +25,28 @@
 #define PRINT_WRITE_BEHIND_2(X,Y) do {} while(0)
 #endif
 
-#define CACHE_LEN 50
+#if DEBUG_CINIT
+#define PRINT_CINIT(X) {printf("(cache-init) "); printf(X);}
+#define PRINT_CINIT_2(X,Y) {printf("(cache-init) "); printf(X,Y);}
+#else
+#define PRINT_CINIT(X) do {} while(0)
+#define PRINT_CINIT_2(X,Y) do {} while(0)
+#endif
+
+#define CACHE_SIZE 50
 
 #define CACHE_WAIT_TIME 10
 
-struct cache_sector
+struct cache_slot
 {
 	char data[BLOCK_SECTOR_SIZE];
+	/* synchronization */
+	int num_accessors;
+	bool pending_io;
+	bool io_busy;
+	struct condition cond;
+	bool dirty;
+	block_sector_t sector;
 };
 
 /*
@@ -47,29 +64,32 @@ struct cache_entry
 	struct list_elem l_elem;
 	block_sector_t sector_idx;
 	int slot; /* cache slot */
-	bool dirty;
 };
 
 static struct hash cache_hash;
-static struct cache_sector cache_array[CACHE_LEN];
+static struct cache_slot cache_array[CACHE_SIZE];
 static struct list list_data;
-static struct lock lock_map;
 /*static struct list list_meta;*/
 
+static struct lock lock_map;
 
+
+
+/* intialize the cache structures */
+void cache_write_behind_loop(void *_cache_wait);
 void cache_flush_entry(struct cache_entry *ce);
-
 struct cache_entry *cache_put(block_sector_t sector_idx, bool meta UNUSED);
-void cache_set_dirty(struct cache_entry *ce, bool value);
-void cache_update_lru(struct cache_entry *ce, bool meta UNUSED);
-
+struct cache_entry *cache_slot_init(int slot, block_sector_t sector_idx);
+void cache_set_dirty(struct cache_slot *cs, bool value);
+void cache_lru_remove(struct cache_entry *ce, bool meta UNUSED);
+void cache_lru_insert(struct cache_entry *ce, bool meta UNUSED);
 int cache_evict(void);
-struct cache_entry *cache_insert(block_sector_t sector_idx, int slot);	
 struct cache_entry *cache_get_entry(block_sector_t sector_idx);
-bool cache_cmp(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
+struct cache_slot* cache_get_slot(struct cache_entry *ce);
+bool cache_cmp(const struct hash_elem *a,const struct hash_elem *b,void *aux UNUSED);
 unsigned cache_hash_func(const struct hash_elem *e, void *aux UNUSED);
 void hash_clean_entry(struct hash_elem *he, void *aux UNUSED);
-void cache_write_behind_loop(void *_cache_wait);
+
 
 
 /* intialize the cache structures */
@@ -107,42 +127,103 @@ cache_flush(void)
 void
 cache_flush_entry(struct cache_entry *ce)
 {
-	block_write (fs_device, ce->sector_idx, &(cache_array[ce->slot]));
+	struct cache_slot *cs = cache_get_slot(ce);
+	block_write (fs_device, ce->sector_idx, &cs->data);
 }
 
 /* returns the new cache_entry struct for SECTOR */
-struct cache_entry * 
+struct cache_entry* 
 cache_put(block_sector_t sector_idx, bool meta UNUSED)
 {
+	ASSERT(lock_held_by_current_thread(&lock_map));
+	static int next_slot = 0;
+
 	struct cache_entry *ce = cache_get_entry(sector_idx);
 	if (ce == NULL)
 	{
 		int slot;
-		int slots_used = hash_size(&cache_hash);
-		if (slots_used < CACHE_LEN)
-			slot = slots_used;
-		else {
+		if (next_slot < CACHE_SIZE) {
+			slot = next_slot;
+			next_slot++;
+		} else {
 			slot = cache_evict();
 		}
-		ce = cache_insert(sector_idx, slot);	
+		ce = cache_slot_init(slot, sector_idx);	
 	}
-	else
-	ASSERT(ce != NULL);
+	
 	return ce;
 }
 
-void
-cache_set_dirty(struct cache_entry *ce, bool value)
+/* evict a cache sector and return the index
+   of the available slot */
+int
+cache_evict(void)
 {
-	ce->dirty = value;
+	ASSERT(lock_held_by_current_thread(&lock_map));
+
+	struct list_elem *e = list_pop_front(&list_data);
+	struct cache_entry *ce = list_entry(e, struct cache_entry, l_elem);
+	struct cache_slot * cs = cache_get_slot(ce);
+
+	if (cs->dirty)
+		cache_flush_entry(ce);
+	
+	struct hash_elem *old = hash_delete (&cache_hash, &ce->h_elem);
+	ASSERT(old != NULL);
+	int slot = ce->slot;
+	free(ce);
+
+	return slot;
+}	
+
+
+struct cache_entry *
+cache_slot_init(int slot, block_sector_t sector_idx)
+{
+	struct cache_entry *ce = malloc(sizeof(struct cache_entry));
+	if (ce == NULL)
+		PANIC("could not allocate cache entry");
+
+	PRINT_CINIT_2("sector_idx: %d\n",sector_idx);
+	PRINT_CINIT_2("slot: %d\n",slot);
+
+	ce->sector_idx = sector_idx;
+	ce->slot = slot;
+
+	struct cache_slot *cs = &cache_array[slot];
+	cs->dirty = false;
+	cs->num_accessors = 0;
+	cs->pending_io = false;
+	cs->io_busy = false;
+	cs->sector = sector_idx;
+	cond_init(&cs->cond);
+
+	struct hash_elem *old = hash_insert (&cache_hash, &ce->h_elem);
+
+	/* load the actual data here. now. */
+	block_read (fs_device, sector_idx, &cs->data);
+
+	ASSERT(old == NULL);
+	list_push_back(&list_data, &ce->l_elem);
+
+	return ce;
+}
+
+
+
+
+
+void
+cache_set_dirty(struct cache_slot *cs, bool value)
+{
+	cs->dirty = value;
 }
 
 /* move the cached SECTOR to the back of lru queue */
 void 
-cache_update_lru(struct cache_entry *ce, bool meta UNUSED)
+cache_lru_remove(struct cache_entry *ce, bool meta UNUSED)
 {
 	list_remove(&ce->l_elem);
-	list_push_back(&list_data, &ce->l_elem);
 	/*
 	if (meta) {
 		list_push_back(&list_meta, ce->l_elem);
@@ -152,44 +233,10 @@ cache_update_lru(struct cache_entry *ce, bool meta UNUSED)
 	*/
 }
 
-/* evict a cache sector and return the index
-   of the available slot */
-int
-cache_evict(void)
+void
+cache_lru_insert(struct cache_entry *ce, bool meta UNUSED)
 {
-	struct list_elem *e = list_pop_front(&list_data);
-	struct cache_entry *ce = list_entry(e, struct cache_entry, l_elem);
-	int slot = ce->slot;
-
-	if (ce->dirty)
-		cache_flush_entry(ce);
-	
-	struct hash_elem *old = hash_delete (&cache_hash, &ce->h_elem);
-	ASSERT(old != NULL);
-	free(ce);
-
-	return slot;
-}
-
-struct cache_entry *
-cache_insert(block_sector_t sector_idx, int slot)
-{
-	struct cache_entry *ce = malloc(sizeof(struct cache_entry));
-	ASSERT(ce != NULL);
-
-	ce->sector_idx = sector_idx;
-	ce->slot = slot;
-	ce->dirty = false;
-
-	struct hash_elem *old = hash_insert (&cache_hash, &ce->h_elem);
-
-	/* load the actual data here. now. */
-	block_read (fs_device, ce->sector_idx, &(cache_array[ce->slot]));
-
-	ASSERT(old == NULL);
 	list_push_back(&list_data, &ce->l_elem);
-
-	return ce;
 }
 
 
@@ -197,35 +244,69 @@ void
 cache_read (block_sector_t sector_idx, void *buffer, 
 								 int sector_ofs, int chunk_size, bool meta)
 {
-	lock_acquire(&lock_map);
-		
-	struct cache_entry *ce = cache_put(sector_idx, meta);
-	ASSERT(ce->slot >= 0 && ce->slot < CACHE_LEN);
-	ASSERT(sector_ofs + chunk_size <= BLOCK_SECTOR_SIZE);
-	memcpy (buffer, cache_array[ce->slot].data + sector_ofs, chunk_size);
-	cache_update_lru(ce, meta);
-
+	lock_acquire(&lock_map);	
+	struct cache_slot *cs;
+	struct cache_entry *ce;
+	while (true) {
+		ce = cache_put(sector_idx, meta);
+		cs = cache_get_slot(ce);
+		if (!cs->io_busy)
+			break;
+		cond_wait(&cs->cond,&lock_map);
+	}
+	cs->num_accessors++;
+	cache_lru_remove(ce, meta);	
+	cache_lru_insert(ce, meta);
 	lock_release(&lock_map);
+
+	/*ASSERT(ce->slot >= 0 && cs->slot < CACHE_LEN);*/
+	ASSERT(sector_ofs + chunk_size <= BLOCK_SECTOR_SIZE);
+	memcpy (buffer, cs->data + sector_ofs, chunk_size);
+
+	lock_acquire(&lock_map);
+	cs->num_accessors--;
+	lock_release(&lock_map);
+
 }
 
 void 
 cache_write (block_sector_t sector_idx, const void *buffer, 
 								 int sector_ofs, int chunk_size, bool meta)
 {
-	lock_acquire(&lock_map);
+	lock_acquire(&lock_map);	
+	struct cache_slot *cs;
+	struct cache_entry *ce;
+	while (true) {
+		ce = cache_put(sector_idx, meta);
+		cs = cache_get_slot(ce);
+		if (!cs->io_busy)
+			break;
+		cond_wait(&cs->cond,&lock_map);
+	}
+	cs->num_accessors++;
+	cache_lru_remove(ce, meta);	
+	cache_lru_insert(ce, meta);
+	lock_release(&lock_map);
 
-	struct cache_entry *ce = cache_put(sector_idx, meta);
-	ASSERT(ce->slot >= 0 && ce->slot < CACHE_LEN);
+
+	/*ASSERT(ce->slot >= 0 && ce->slot < CACHE_LEN);*/
 	ASSERT(sector_ofs + chunk_size <= BLOCK_SECTOR_SIZE);
-	memcpy (cache_array[ce->slot].data + sector_ofs, buffer, chunk_size);
-	cache_set_dirty(ce, true);
-	cache_update_lru(ce, meta);
+	memcpy (cs->data + sector_ofs, buffer, chunk_size);
+	cache_set_dirty(cs, true);
 
+	lock_acquire(&lock_map);
+	cs->num_accessors--;
 	lock_release(&lock_map);
 }
 
+struct cache_slot* 
+cache_get_slot(struct cache_entry *ce)
+{
+	return &cache_array[ce->slot];
+}
 
 /* hash helper functions */
+
 struct cache_entry *
 cache_get_entry(block_sector_t sector_idx)
 {
@@ -261,9 +342,10 @@ cache_hash_func(const struct hash_elem *e, void *aux UNUSED)
 void hash_clean_entry(struct hash_elem *he, void *aux UNUSED)
 {
 	struct cache_entry *ce = hash_entry(he, struct cache_entry, h_elem);
-	if (ce->dirty)	{
+	struct cache_slot *cs = &cache_array[ce->slot];
+	if (cs->dirty)	{
 		cache_flush_entry(ce);
-		cache_set_dirty(ce, false);
+		cache_set_dirty(cs, false);
 	}	
 }
 
