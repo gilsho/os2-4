@@ -194,9 +194,9 @@ to the tail of the LRU entry list.
 >> C3: Describe your implementation of write-behind.
 
 When the cache is initialized, a dedicated 'cleaner' thread is
-spawned. This thread runs in a continuous while loop. It sleeps for 30 seconds, 
-then wakes up and flushes the entire cache by writing all contents to disk. It's
-repeats this procedure for the entire duration of the program.
+spawned. This thread runs in a continuous while loop. It sleeps for 30
+seconds, then wakes up and flushes the entire cache by writing all contents
+to disk. It repeats this procedure for the entire duration of the program.
 
 >> C4: Describe your implementation of read-ahead.
 
