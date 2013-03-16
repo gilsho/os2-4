@@ -8,6 +8,7 @@
 #if (DEBUG & DEBUG_FILE)
 #define DEBUG_FILE_WRITE      0
 #define DEBUG_FILE_WRITE_AT   0
+#define DEBUG_FILE_OPEN       1
 #endif
 
 #if DEBUG_FILE_WRITE
@@ -25,6 +26,15 @@
 #define PRINT_FILE_WRITE_AT(X) do {} while(0)
 #define PRINT_FILE_WRITE_AT_2(X,Y) do {} while(0)
 #endif
+
+#if DEBUG_FILE_OPEN
+#define PRINT_OPEN(X) {printf("(file-write-at) "); printf(X);}
+#define PRINT_OPEN_2(X,Y) {printf("(file-write-at) "); printf(X,Y);}
+#else
+#define PRINT_OPEN(X) do {} while(0)
+#define PRINT_OPEN_2(X,Y) do {} while(0)
+#endif
+
 
 /* An open file. */
 struct file 

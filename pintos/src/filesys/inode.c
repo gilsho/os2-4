@@ -15,11 +15,11 @@
 #define DEBUG_EXTEND        0
 #define DEBUG_CREATE        0
 #define DEBUG_OPEN          0
-#define DEBUG_READ          0
+#define DEBUG_READ          1
 #define DEBUG_WRITE         0
 #define DEBUG_FREE_MAP      0
-#define DEBUG_FREE_SECTOR   1
-#define DEBUG_ICLOSE        1
+#define DEBUG_FREE_SECTOR   0
+#define DEBUG_ICLOSE        0
 #else
 #define DEBUG_EXTEND        0
 #define DEBUG_CREATE        0
@@ -554,6 +554,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
   uint8_t *buffer = buffer_;
   off_t bytes_read = 0;
 
+  PRINT_READ_2("size: %d\n",size);
   PRINT_READ_2("inode sector: %d\n", inode->sector);
   while (size > 0) 
     {
@@ -569,7 +570,8 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
 
       /* Number of bytes to actually copy out of this sector. */
       int chunk_size = size < min_left ? size : min_left;
-      if (chunk_size <= 0)
+      PRINT_READ_2("chunk_size: %d\n",chunk_size);
+      if (chunk_size <= 0) 
         break;
 
       PRINT_READ_2("sectord_idx: %d\n", (int) sector_idx);

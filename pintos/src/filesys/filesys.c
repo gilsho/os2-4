@@ -12,15 +12,17 @@
 #include "threads/vaddr.h"
 
 #if (DEBUG & DEBUG_FILESYS)
-#define DEBUG_FCREATE       1
+#define DEBUG_FCREATE       0
 #define DEBUG_SPLIT         0
 #define DEBUG_FOPEN         0
+#define DEBUG_FOPEN_FILE    1
 #define DEBUG_FOPEN_DIR     0
-#define DEBUG_FREMOVE       1
+#define DEBUG_FREMOVE       0
 #else
 #define DEBUG_FCREATE       0
 #define DEBUG_SPLIT         0
 #define DEBUG_FOPEN         0
+#define DEBUG_FOPEN_FILE    0
 #define DEBUG_FOPEN_DIR     0
 #define DEBUG_FREMOVE       0
 #endif
@@ -64,6 +66,14 @@
 #else
 #define PRINT_FOPEN(X) do {} while(0)
 #define PRINT_FOPEN_2(X,Y) do {} while(0)
+#endif
+
+#if DEBUG_FOPEN_FILE
+#define PRINT_FOPEN_FILE(X) {printf("(filesys-open) "); printf(X);}
+#define PRINT_FOPEN_FILE_2(X,Y) {printf("(filesys-open) "); printf(X,Y);}
+#else
+#define PRINT_FOPEN_FILE(X) do {} while(0)
+#define PRINT_FOPEN_FILE_2(X,Y) do {} while(0)
 #endif
 
 
@@ -223,10 +233,10 @@ struct file*
 filesys_open_file (struct dir *start_dir, const char *path)
 {         
   struct inode *inode = NULL;
-  PRINT_FOPEN_2("path: %s", path);
-  PRINT_FOPEN_2("start dir->inode: %d\n", dir_get_sector(start_dir));
+  PRINT_FOPEN_FILE_2("path: %s\n", path);
+  PRINT_FOPEN_FILE_2("start dir->sector: %d\n", dir_get_sector(start_dir));
   dir_lookup(start_dir,path,&inode);
-
+  PRINT_FOPEN_FILE_2("inode: %p\n", inode);
   return file_open(inode);
 }
 

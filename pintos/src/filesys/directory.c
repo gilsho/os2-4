@@ -9,8 +9,8 @@
 
 #if (DEBUG & DEBUG_DIR)
 #define DEBUG_ADD        0
-#define DEBUG_REMOVE     1
-#define DEBUG_LOOKUP     0
+#define DEBUG_REMOVE     0
+#define DEBUG_LOOKUP     1
 #define DEBUG_READDIR    0
 #else
 #define DEBUG_ADD        0
