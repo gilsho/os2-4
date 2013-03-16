@@ -17,10 +17,10 @@
 #define DEBUG_CREATE        0
 #define DEBUG_OPEN          0
 #define DEBUG_READ          0
-#define DEBUG_WRITE         0
+#define DEBUG_WRITE         1
 #define DEBUG_FREE_MAP      0
-#define DEBUG_FREE_SECTOR   1
-#define DEBUG_ICLOSE        1
+#define DEBUG_FREE_SECTOR   0
+#define DEBUG_ICLOSE        0
 #else
 #define DEBUG_EXTEND        0
 #define DEBUG_CREATE        0
@@ -65,8 +65,8 @@
 #endif
 
 #if DEBUG_WRITE
-#define PRINT_WRITE(X,Y) {if (X != 2) {printf("(inode-write) "); printf(Y);}}
-#define PRINT_WRITE_2(X,Y,Z) {if (X != 2) {printf("(inode-write) "); printf(Y,Z);}}
+#define PRINT_WRITE(X,Y) {if (X >= 0) {printf("(inode-write) "); printf(Y);}}
+#define PRINT_WRITE_2(X,Y,Z) {if (X >= 0) {printf("(inode-write) "); printf(Y,Z);}}
 #else
 #define PRINT_WRITE(X,Y) do {} while(0)
 #define PRINT_WRITE_2(X,Y,Z) do {} while(0)
@@ -133,7 +133,10 @@ struct inode
     int open_cnt;                       /* Number of openers. */
     bool removed;                       /* True if deleted, false otherwise. */
     int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
-    struct lock lock_inode;
+    struct lock lock_dir;               /* Unused for files */
+    struct lock lock_file;              /* Unused for directories */
+    bool extending;
+    struct condition ready_to_extend;
   };
 
 
@@ -149,7 +152,7 @@ block_sector_t inode_get_dbl_indirect_sector_table(const struct inode *inode);
 void inode_set_dbl_indirect_sector_table(const struct inode *inode, block_sector_t dbl_indirect);
 block_sector_t inode_get_sector_table_entry(block_sector_t sector_table, int index);
 void inode_set_sector_table_entry(block_sector_t sector_table, int index, block_sector_t sector_entry);
-bool inode_extend(struct inode *inode, int new_length);
+off_t inode_extend(struct inode *inode, int old_length, int new_length);
 void inode_zero_sector(block_sector_t sector, bool meta);
 
 
@@ -239,13 +242,12 @@ inode_set_sector_table_entry(block_sector_t sector_table, int index, block_secto
    Returns -1 if INODE does not contain data for a byte at offset
    POS. */
 static block_sector_t
-byte_to_sector (const struct inode *inode, off_t pos) 
+byte_to_sector (const struct inode *inode, off_t length, off_t pos) 
 {
   ASSERT (inode != NULL);
 
   int block_num = pos/BLOCK_SECTOR_SIZE;
 
-  off_t length = inode_length(inode);
 
   if (pos < 0 || pos >= length)
     return -1;
@@ -296,6 +298,7 @@ inode_init (void)
   PRINT_OPEN("inode_init()\n");
   list_init (&open_inodes);
   lock_init(&inode_list_lock);
+
 }
 
 /* Initializes an inode with LENGTH bytes of data and
@@ -330,14 +333,14 @@ inode_create (block_sector_t sector, off_t length, bool is_dir)
   struct inode inode;
   inode.sector = sector;
   
-  bool success = inode_extend(&inode, length);
+  off_t my_length = inode_extend(&inode, disk_inode->length, length);
+  inode_set_length(&inode, my_length);
 
-  PRINT_CREATE_2("success: %d\n",success);
   PRINT_CREATE_2("inode_length: %d\n",inode_length(&inode));
 
   free (disk_inode);
     
-  return success;
+  return my_length == length;
 }
 
 
@@ -467,7 +470,10 @@ inode_open (block_sector_t sector)
   inode->open_cnt = 1;
   inode->deny_write_cnt = 0;
   inode->removed = false;
-  lock_init(&inode->lock_inode);
+  inode->extending = false;
+  cond_init(&inode->ready_to_extend);
+  lock_init(&inode->lock_dir);
+  lock_init(&inode->lock_file);
   list_push_front (&open_inodes, &inode->elem);
 
   lock_release(&inode_list_lock);
@@ -567,18 +573,23 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
   uint8_t *buffer = buffer_;
   off_t bytes_read = 0;
   if(inode_isdir(inode))
-    lock_acquire(&(inode->lock_inode));
+    lock_acquire(&(inode->lock_dir));
+
+  lock_acquire(&(inode->lock_file));
+  off_t length = inode_length(inode);
+  lock_release(&(inode->lock_file));
+
 
   PRINT_READ_2("inode sector: %d\n", inode->sector);
   while (size > 0) 
     {
       /* Disk sector to read, starting byte offset within sector. */
-      block_sector_t sector_idx = byte_to_sector (inode, offset);
+      block_sector_t sector_idx = byte_to_sector (inode, length, offset);
 
       int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
       /* Bytes left in inode, bytes left in sector, lesser of the two. */
-      off_t inode_left = inode_length (inode) - offset;
+      off_t inode_left = length - offset;
       int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
       int min_left = inode_left < sector_left ? inode_left : sector_left;
 
@@ -602,24 +613,21 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
     }
 
   if(inode_isdir(inode))
-    lock_release(&(inode->lock_inode));
+    lock_release(&(inode->lock_dir));
 
   return bytes_read;
 }
 
-bool 
-inode_extend(struct inode *inode, int new_length)
+off_t 
+inode_extend(struct inode *inode, int old_length, int new_length)
 {
-
+  /* returns the requested file size in bytes. caller must set length */
   ASSERT(new_length >= 0);
-  if (new_length == 0)
-    return true;
 
-  int length = (int) inode_length(inode);
+  if (new_length == 0 || new_length <= old_length)
+    return old_length;
 
-  if (new_length <= length)
-    return true;
-
+  int length = old_length;
 
   int end_block = (length == 0) ? -1 : (int) byte_to_block(length);
   int end_write_block = byte_to_block(new_length);
@@ -725,13 +733,11 @@ inode_extend(struct inode *inode, int new_length)
   }
 
   if (success) 
-    inode_set_length(inode, new_length);
+    return new_length;
   else
     inode_free_sectors(inode,end_block,cur_block);
 
-
-  PRINT_EXTEND_2("success: %d\n",success);
-  return success;
+  return old_length;
 }
 
 /* zero-out a data sector */
@@ -754,11 +760,14 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
                 off_t offset) 
 {
 
+
   if(inode_isdir(inode))
-    lock_acquire(&(inode->lock_inode));
+    lock_acquire(&(inode->lock_dir));
 
   const uint8_t *buffer = buffer_;
   off_t bytes_written = 0;
+  off_t length = 0;
+  off_t my_length = length;
 
   if (inode->deny_write_cnt)
     goto done;
@@ -768,28 +777,45 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 
   int end_write_bytes = (offset + size);
 
+  lock_acquire(&(inode->lock_file));
   
-  int length = (int) inode_length(inode);
-  if (end_write_bytes > length){
-    if(!lock_held_by_current_thread(&(inode->lock_inode)))
-      lock_acquire(&(inode->lock_inode));
+  length = inode_length(inode);
 
-    if (!inode_extend(inode, end_write_bytes))
-      goto done;
+  if (end_write_bytes > length){
+    
+    while(inode->extending){
+      cond_wait(&inode->ready_to_extend, &inode->lock_file);
+    }
+    PRINT_WRITE_2(0,"extending to: %d\n", (int) end_write_bytes);
+
+    length = inode_length(inode);
+    if(end_write_bytes > length)
+      inode->extending = true;
   }
+
+  lock_release(&inode->lock_file);
+
+  my_length = inode_extend(inode, length, end_write_bytes);
   
 
   while (size > 0) 
   {
     /* Sector to write, starting byte offset within sector. */
-    block_sector_t sector_idx = byte_to_sector (inode, offset);
+    block_sector_t sector_idx = byte_to_sector (inode, my_length, offset);
     PRINT_WRITE_2(sector_idx,"offset: %d\n", (int) offset);
+
+
+
+    PRINT_WRITE_2(sector_idx,"my_length: %d\n", (int) my_length);
+
+    PRINT_WRITE_2(sector_idx,"file_length: %d\n", inode_length(inode));
+
     PRINT_WRITE_2(sector_idx,"block num: %d\n", (int) byte_to_block(offset));
 
     int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
     /* Bytes left in inode, bytes left in sector, lesser of the two. */
-    off_t inode_left = inode_length (inode) - offset;
+    off_t inode_left = my_length - offset;
     int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
     int min_left = inode_left < sector_left ? inode_left : sector_left;
     int chunk_size = size < min_left ? size : min_left;
@@ -823,8 +849,18 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
   PRINT_WRITE_2(1,"bytes_written: %d\n", bytes_written);*/
 
   done:
-    if(lock_held_by_current_thread(&(inode->lock_inode)))
-      lock_release(&(inode->lock_inode));
+    
+    if(my_length > length){
+      lock_acquire(&inode->lock_file);
+      ASSERT (inode->extending);
+      inode->extending = false;
+      inode_set_length(inode, my_length);
+      cond_broadcast(&inode->ready_to_extend, &inode->lock_file);
+      lock_release(&inode->lock_file);
+    }
+
+    if(inode_isdir(inode))
+      lock_release(&(inode->lock_dir));
     return bytes_written;
 
 }
