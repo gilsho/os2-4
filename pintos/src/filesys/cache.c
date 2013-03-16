@@ -246,7 +246,7 @@ void
 cache_flush_entry(struct cache_slot *cs)
 {
 	lock_acquire(&lock_map);
-	while (cs->pending_evict || cs->io_busy || cs->num_accessors > 0) {
+	while (cs->io_busy || cs->num_accessors > 0) {
 			cond_wait(&cs->io_done,&lock_map);
 	}
 
@@ -321,7 +321,7 @@ cache_evict(struct cache_entry *new_ce)
 
 	new_ce->slot = old_ce->slot;
 
-	while (cs->num_accessors > 0 && !cs->io_busy) {
+	while (cs->num_accessors > 0 || cs->io_busy) {
 		cs->pending_evict = true;
 		cond_wait(&cs->io_done,&lock_map);
 	}
@@ -414,7 +414,7 @@ cache_read (block_sector_t sector, block_sector_t next_sector,
 	lock_acquire(&lock_map);
 	cs->num_accessors--;
 	ASSERT(!cs->io_busy);
-	/*if (cs->pending_evict && cs->num_accessors == 0)*/
+	if (cs->num_accessors == 0)
 		cond_signal(&cs->io_done,&lock_map);
 	lock_release(&lock_map);
 	if (next_sector != FETCH_NONE)
@@ -449,7 +449,7 @@ cache_write (block_sector_t sector, block_sector_t next_sector,
 	cache_set_dirty(cs, true);
 	cs->num_accessors--;
 	ASSERT(!cs->io_busy);
-	/*if (cs->pending_evict && cs->num_accessors == 0)*/
+	if (cs->num_accessors == 0)
 			cond_signal(&cs->io_done,&lock_map);
 	lock_release(&lock_map);
 	if (next_sector != FETCH_NONE)
