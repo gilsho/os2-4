@@ -8,6 +8,7 @@
 #include "filesys/cache.h"
 #include "threads/malloc.h"
 #include "threads/thread.h"
+#include "threads/synch.h"
 #include <stdio.h>
 
 
@@ -132,6 +133,7 @@ struct inode
     int open_cnt;                       /* Number of openers. */
     bool removed;                       /* True if deleted, false otherwise. */
     int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
+    struct lock lock_inode;
   };
 
 
@@ -285,6 +287,7 @@ byte_to_sector (const struct inode *inode, off_t pos)
 /* List of open inodes, so that opening a single inode twice
    returns the same `struct inode'. */
 static struct list open_inodes;
+static struct lock inode_list_lock;
 
 /* Initializes the inode module. */
 void
@@ -292,6 +295,7 @@ inode_init (void)
 {
   PRINT_OPEN("inode_init()\n");
   list_init (&open_inodes);
+  lock_init(&inode_list_lock);
 }
 
 /* Initializes an inode with LENGTH bytes of data and
@@ -433,6 +437,7 @@ inode_open (block_sector_t sector)
 
   PRINT_OPEN_2("sector: %d\n", sector);
 
+  lock_acquire(&inode_list_lock);
   /* Check whether this inode is already open. */
   for (e = list_begin (&open_inodes); e != list_end (&open_inodes);
        e = list_next (e)) 
@@ -445,21 +450,28 @@ inode_open (block_sector_t sector)
         {
           /*PRINT_OPEN("inode in memory\n");*/
           inode_reopen (inode);
+          lock_release(&inode_list_lock);
           return inode; 
         }
     }
 
   /* Allocate memory. */
   inode = malloc (sizeof *inode);
-  if (inode == NULL)
+  if (inode == NULL){
+    lock_release(&inode_list_lock);
     return NULL;
+  }
 
   /* Initialize. */
-  list_push_front (&open_inodes, &inode->elem);
   inode->sector = sector;
   inode->open_cnt = 1;
   inode->deny_write_cnt = 0;
   inode->removed = false;
+  lock_init(&inode->lock_inode);
+  list_push_front (&open_inodes, &inode->elem);
+
+  lock_release(&inode_list_lock);
+ 
 
   PRINT_OPEN_2("open_cnt: (after increment) %d\n",inode->open_cnt);
 
@@ -517,8 +529,9 @@ inode_close (struct inode *inode)
   if (inode->open_cnt == 0)
     {
       /* Remove from inode list and release lock. */
+      lock_acquire(&inode_list_lock);
       list_remove (&inode->elem);
- 
+      lock_release(&inode_list_lock);
       /* Deallocate blocks if removed. */
       if (inode->removed) 
         {
@@ -553,6 +566,8 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
 {
   uint8_t *buffer = buffer_;
   off_t bytes_read = 0;
+  if(inode_isdir(inode))
+    lock_acquire(&(inode->lock_inode));
 
   PRINT_READ_2("inode sector: %d\n", inode->sector);
   while (size > 0) 
@@ -585,6 +600,9 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       offset += chunk_size;
       bytes_read += chunk_size;
     }
+
+  if(inode_isdir(inode))
+    lock_release(&(inode->lock_inode));
 
   return bytes_read;
 }
@@ -735,19 +753,31 @@ off_t
 inode_write_at (struct inode *inode, const void *buffer_, off_t size,
                 off_t offset) 
 {
+
+  if(inode_isdir(inode))
+    lock_acquire(&(inode->lock_inode));
+
   const uint8_t *buffer = buffer_;
   off_t bytes_written = 0;
 
   if (inode->deny_write_cnt)
-    return 0;
+    goto done;
 
   if (size == 0)
-    return 0;
+    goto done;
 
   int end_write_bytes = (offset + size);
 
-  if (!inode_extend(inode, end_write_bytes))
-    return 0;
+  
+  int length = (int) inode_length(inode);
+  if (end_write_bytes > length){
+    if(!lock_held_by_current_thread(&(inode->lock_inode)))
+      lock_acquire(&(inode->lock_inode));
+
+    if (!inode_extend(inode, end_write_bytes))
+      goto done;
+  }
+  
 
   while (size > 0) 
   {
@@ -792,7 +822,11 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
   /*PRINT_FREE_MAP_2(2,"bytes_written: %d\n", bytes_written);
   PRINT_WRITE_2(1,"bytes_written: %d\n", bytes_written);*/
 
-  return bytes_written;
+  done:
+    if(lock_held_by_current_thread(&(inode->lock_inode)))
+      lock_release(&(inode->lock_inode));
+    return bytes_written;
+
 }
 
 /* Disables writes to INODE.
