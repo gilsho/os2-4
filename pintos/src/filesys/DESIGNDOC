@@ -177,8 +177,14 @@ the main thread.
 >> C2: Describe how your cache replacement algorithm chooses a cache
 >> block to evict.
 
-Our cache replacement is an implementation of LRU that maintains an
-ordered list of 
+Our cache replacement is an implementation of LRU eviction. We maintain
+a static list of cache entries that are not blocking on I/O, ordered
+by least to most recently accessed time. When sectors that have existing
+entries in the cache are accessed due to read/write operations, they are
+move to the tail of the list. When eviction occurs, the LRU algorithm 
+simply pops the entry at the front of the list, which is the least 
+recently used entry. The new entry that is put in its place is appended 
+to the tail of the LRU entry list.
 
 >> C3: Describe your implementation of write-behind.
 
