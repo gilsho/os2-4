@@ -44,19 +44,41 @@ Our inode structure contains 12 direct sector pointers, 1 indirect block
 pointer, and 1 doubly-indirect pointer. The indirect block contains 128 
 direct sector pointers. The doubly-indirect block contains 128 indirect 
 block pointers, which each contain 128 sector pointers. In total, there 
-are 12 + 128 + 128^2 data sectors. Since each data sector is 512 bytes, the maximum size of a file is: 
+are 12 + 128 + 128^2 data sectors. Since each data sector is 512 bytes, 
+the maximum size of a file is: 
 
 (12 + 128 + 128^2) * (512) = 8460288 bytes = 8262 KB
 
 
-If we include the overheard of allocating metadata, there are 130 additional
-sectors (1 for the inode, 129 for indirect pointer tables), which
-brings the total filesize to 8526848 bytes.
+If we include the overheard of allocating metadata, there are 130 
+additionalsectors (1 for the inode, 129 for indirect pointer tables), 
+which brings the total filesize to 8526848 bytes.
 
 ---- SYNCHRONIZATION ----
 
 >> A3: Explain how your code avoids a race if two processes attempt to
 >> extend a file at the same time.
+
+To determine if a process needs to extend a file, it must compare
+its 'desired' length to the current length of the file. Before 
+getting the current length of a file, a process must acquire the 
+lock for that file. If the process determines that an extension
+is necessary, it first checks to see if the file is already being
+extended. If it is, then the current process must wait on a condition 
+variable until the previous extension is complete. Upon waking, it 
+will determine again if an extension is necessary.
+
+When a process extends, it releases the lock, and allocates the 
+sectors needed for extension. It then writes its data to those
+sectors. Once allocation and writing of the extended region is 
+complete, the process reacquires the inode metadata lock and 
+updates the file length to reflect the extension. The key point
+is that the file length is updated only after the allocation and
+writing of data is complete. It will then broadcast to other
+processes who are waiting to extend.
+
+
+------------------------------------------------------------------
 
 Synchronization is enforced at the inode level for both files and
 directories. Each inode contains a flag indicating if an extension
