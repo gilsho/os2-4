@@ -7,51 +7,6 @@
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
 
-#if (DEBUG & DEBUG_DIR)
-#define DEBUG_ADD        0
-#define DEBUG_REMOVE     1
-#define DEBUG_LOOKUP     0
-#define DEBUG_READDIR    0
-#else
-#define DEBUG_ADD        0
-#define DEBUG_LOOKUP     0
-#define DEBUG_REMOVE     0
-#define DEBUG_READDIR    0
-#endif
-
-#if DEBUG_ADD
-#define PRINT_ADD(X) {printf("(dir-add) "); printf(X);}
-#define PRINT_ADD_2(X,Y) {printf("(dir-add) "); printf(X,Y);}
-#else
-#define PRINT_ADD(X) do {} while(0)
-#define PRINT_ADD_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_LOOKUP
-#define PRINT_LOOKUP(X) {printf("(dir-lookup) "); printf(X);}
-#define PRINT_LOOKUP_2(X,Y) {printf("(dir-lookup) "); printf(X,Y);}
-#else
-#define PRINT_LOOKUP(X) do {} while(0)
-#define PRINT_LOOKUP_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_REMOVE
-#define PRINT_REMOVE(X) {printf("(dir-remove) "); printf(X);}
-#define PRINT_REMOVE_2(X,Y) {printf("(dir-remove) "); printf(X,Y);}
-#else
-#define PRINT_REMOVE(X) do {} while(0)
-#define PRINT_REMOVE_2(X,Y) do {} while(0)
-#endif
-
-
-#if DEBUG_READDIR
-#define PRINT_READDIR(X) {printf("(dir-readdir) "); printf(X);}
-#define PRINT_READDIR_2(X,Y) {printf("(dir-readdir) "); printf(X,Y);}
-#else
-#define PRINT_READDIR(X) do {} while(0)
-#define PRINT_READDIR_2(X,Y) do {} while(0)
-#endif
-
 /* A directory. */
 struct dir 
   {
@@ -215,12 +170,9 @@ dir_lookup (struct dir *start_dir, const char *path,
   ASSERT (start_dir != NULL);
   ASSERT (path != NULL);
 
-  PRINT_LOOKUP_2("start_dir->inode->sector: %d\n", 
-    inode_get_sector(start_dir->inode));
   /* +1 open_cnt for start_dir */
   struct dir *cur_dir = dir_reopen (start_dir);
 
-  PRINT_LOOKUP_2("path: %s\n", path);
 
   /* copy the path arg string */
   size_t len = strnlen (path,PGSIZE);
@@ -238,22 +190,16 @@ dir_lookup (struct dir *start_dir, const char *path,
     return false;
   memcpy(pathcpy,path,len+1);
 
-  PRINT_LOOKUP_2("pathcpy: %s\n", pathcpy);
-
   char *token, *next_token, *save_ptr;
   struct inode *cur_inode = cur_dir->inode;
 
   token = strtok_r (pathcpy, "/", &save_ptr);
 
-  PRINT_LOOKUP_2("before loop, token: %s\n", token);
   while (token != NULL) {
-    PRINT_LOOKUP_2("token %s\n", token);
     if(lookup (cur_dir, token, &e, NULL)) {
-      PRINT_LOOKUP_2("token found in cur_dir. sector is: %d\n",e.inode_sector);
       /* +1 token inode */
       cur_inode = inode_open (e.inode_sector);
     } else {
-      PRINT_LOOKUP("token not found in cur_dir\n");
       /* -1 current directory */
       dir_close(cur_dir);
       return false; /* entry doesn't exist in directory */
@@ -318,9 +264,6 @@ dir_add(struct dir *parent_dir, const char *name, block_sector_t inode_sector)
   strlcpy (e.name, name, sizeof e.name);
   e.inode_sector = inode_sector;
 
-  PRINT_ADD_2("e.in_use: %d\n", (int) e.in_use);
-  PRINT_ADD_2("e.inode_sector: %d\n", (int) e.inode_sector);
-
   success = inode_write_at (parent_dir->inode, &e, sizeof e, ofs) == sizeof e;
   return success;
 }
@@ -339,18 +282,15 @@ dir_remove(struct dir *dir, const char *name)
   inode_acquire_dir_lock(dir->inode);
 
   /* Find directory entry. */
-  PRINT_REMOVE("milestone 1\n");
   if (!lookup (dir, name, &e, &ofs))
     goto done;
 
   /* Open inode. */
-  PRINT_REMOVE("milestone 2\n");
 
   inode = inode_open (e.inode_sector);
   if (inode == NULL || (inode_isdir(inode) && !dir_is_empty(inode)))
     goto done;
 
-  PRINT_REMOVE("milestone 3\n");
   /* Erase directory entry. */
   e.in_use = false;
   if (inode_write_at (dir->inode, &e, sizeof e, ofs) != sizeof e) 
@@ -362,9 +302,7 @@ dir_remove(struct dir *dir, const char *name)
   
 
   success = true;
-  PRINT_REMOVE("milestone 4\n");
 
-  PRINT_REMOVE_2("inode: %p\n",inode);
  done:
   inode_release_dir_lock(dir->inode);
   if (inode != NULL)
@@ -385,16 +323,12 @@ dir_readdir (struct dir *dir, char name[NAME_MAX + 1])
 {
   struct dir_entry e;
 
-  PRINT_READDIR_2("dir: %p\n",dir);
-  PRINT_READDIR_2("dir sector: %d\n", dir_get_sector(dir));
   while (inode_read_at (dir->inode, &e, sizeof e, dir->pos) == sizeof e) 
     {
       dir->pos += sizeof e;
       if (e.in_use)
         {
-          PRINT_READDIR_2("pos: %d\n",dir->pos);
           strlcpy (name, e.name, NAME_MAX + 1);
-          PRINT_READDIR_2("name: %s\n",name);
           if(strcmp(name, PARENT_DIR) == 0 || strcmp(name, CURRENT_DIR) == 0)
             continue;
           return true;

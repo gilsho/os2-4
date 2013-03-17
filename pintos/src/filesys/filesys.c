@@ -11,61 +11,6 @@
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
 
-#if (DEBUG & DEBUG_FILESYS)
-#define DEBUG_FCREATE       1
-#define DEBUG_SPLIT         0
-#define DEBUG_FOPEN         0
-#define DEBUG_FOPEN_DIR     0
-#define DEBUG_FREMOVE       1
-#else
-#define DEBUG_FCREATE       0
-#define DEBUG_SPLIT         0
-#define DEBUG_FOPEN         0
-#define DEBUG_FOPEN_DIR     0
-#define DEBUG_FREMOVE       0
-#endif
-
-#if DEBUG_FCREATE
-#define PRINT_FCREATE(X) {printf("(filesys-create) "); printf(X);}
-#define PRINT_FCREATE_2(X,Y) {printf("(filesys-create) "); printf(X,Y);}
-#else
-#define PRINT_FCREATE(X) do {} while(0)
-#define PRINT_FCREATE_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_FREMOVE
-#define PRINT_FREMOVE(X) {printf("(filesys-remove) "); printf(X);}
-#define PRINT_FREMOVE_2(X,Y) {printf("(filesys-remove) "); printf(X,Y);}
-#else
-#define PRINT_FREMOVE(X) do {} while(0)
-#define PRINT_FREMOVE_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_FOPEN_DIR
-#define PRINT_FOPEN_DIR(X) {printf("(filesys-create) "); printf(X);}
-#define PRINT_FOPEN_DIR_2(X,Y) {printf("(filesys-create) "); printf(X,Y);}
-#else
-#define PRINT_FOPEN_DIR(X) do {} while(0)
-#define PRINT_FOPEN_DIR_2(X,Y) do {} while(0)
-#endif
-
-
-#if DEBUG_SPLIT
-#define PRINT_SPLIT(X) {printf("(filesys-split) "); printf(X);}
-#define PRINT_SPLIT_2(X,Y) {printf("(filesys-split) "); printf(X,Y);}
-#else
-#define PRINT_SPLIT(X) do {} while(0)
-#define PRINT_SPLIT_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_FOPEN
-#define PRINT_FOPEN(X) {printf("(filesys-open) "); printf(X);}
-#define PRINT_FOPEN_2(X,Y) {printf("(filesys-open) "); printf(X,Y);}
-#else
-#define PRINT_FOPEN(X) do {} while(0)
-#define PRINT_FOPEN_2(X,Y) do {} while(0)
-#endif
-
 
 /* Partition that contains the file system. */
 struct block *fs_device;
@@ -103,7 +48,6 @@ void
 filesys_done (void) 
 {
   cache_flush();
-  free_map_print_num_alloc();
   free_map_close ();
 }
 
@@ -115,7 +59,7 @@ bool filesys_resolve_path(struct dir* start_dir, const char *path,
   char *parent_path = NULL;
   struct inode *inode = NULL;
   bool success = false;
-  PRINT_SPLIT_2("start dir: %p\n", start_dir);
+
   if(!split_path(path, &parent_path, name))
     goto done;
 
@@ -125,7 +69,6 @@ bool filesys_resolve_path(struct dir* start_dir, const char *path,
 
   *parent_dir = dir_open(inode);
 
-  PRINT_SPLIT_2("parent_dir: %p\n", *parent_dir);
 
   if (*parent_dir == NULL)
   {
@@ -151,8 +94,6 @@ bool filesys_resolve_path(struct dir* start_dir, const char *path,
 bool
 filesys_create (struct dir *start_dir, const char *path, off_t initial_size, bool is_dir) 
 {
-  PRINT_FCREATE_2("path: %s\n", path);
-  PRINT_FCREATE_2("milestone 1 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
   /* TODO: CHECK REMOVED FLAG */
   bool success = false;
   block_sector_t inode_sector = 0;
@@ -160,13 +101,13 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
   struct dir *parent_dir = NULL;
   /*PRINT_FCREATE_2("start dir 1: %p\n", start_dir);*/
   start_dir = dir_reopen(start_dir);
-  PRINT_FCREATE_2("milestone 2 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
+
 
 
   if(start_dir == NULL)
     goto done;
 
-   PRINT_FCREATE_2("milestone 3 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
+
   if(!filesys_resolve_path(start_dir, path, &parent_dir, &name))
     goto done;
 
@@ -181,11 +122,6 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
   if(!free_map_allocate (1, &inode_sector))
     goto done;
 
- 
-
-  PRINT_FCREATE_2("name: %s\n", name);
-  /* TAKE THIS OUT */
-  ASSERT (name != NULL);
 
   if (strnlen(name, PGSIZE) > NAME_MAX)
     goto done;
@@ -197,7 +133,6 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
     if(!file_create(inode_sector, initial_size))
       goto done;
   }
-  PRINT_FCREATE_2("milestone 4 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
   if(!dir_add (parent_dir, name, inode_sector))
     goto done;
 
@@ -214,7 +149,6 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
       parent_dir = NULL;
     }
 
-    PRINT_FCREATE_2("milestone 5 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
     if(start_dir != NULL){
       dir_close(start_dir);
       start_dir = NULL;
@@ -222,7 +156,6 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
     if (!success && inode_sector != 0) {
       inode_destroy(inode_sector);
     }
-  PRINT_FCREATE_2("returning: %d\n", (int)success);
   return success;
 }
 
@@ -236,8 +169,6 @@ struct file*
 filesys_open_file (struct dir *start_dir, const char *path)
 {         
   struct inode *inode = NULL;
-  PRINT_FOPEN_2("path: %s", path);
-  PRINT_FOPEN_2("start dir->inode: %d\n", dir_get_sector(start_dir));
   dir_lookup(start_dir,path,&inode);
 
   return file_open(inode);
@@ -250,7 +181,6 @@ union fd_content
 filesys_open (struct dir *start_dir, const char *path, enum fd_type *type)
 {         
   struct inode *inode = NULL;
-  PRINT_FOPEN_2("start dir->inode: %d\n", dir_get_sector(start_dir));
   dir_lookup(start_dir,path,&inode);
 
   union fd_content content;
@@ -258,9 +188,6 @@ filesys_open (struct dir *start_dir, const char *path, enum fd_type *type)
 
   if (inode == NULL)
     return content;
-
-  PRINT_FOPEN_2("inode->sector: %d\n", inode_get_sector(inode));
-  PRINT_FOPEN_2("is_dir: %d\n", (int) inode_isdir(inode));
   
   if (inode_is_removed(dir_get_inode(start_dir))) {
     inode_close(inode);
@@ -288,9 +215,6 @@ filesys_open (struct dir *start_dir, const char *path, enum fd_type *type)
 bool
 filesys_remove (struct dir *start_dir, const char *path) 
 {
-  PRINT_FREMOVE_2("milestone 0 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
-
-  PRINT_FREMOVE_2("Removing path: %s\n", path);
   bool success = false;
   struct inode *inode = NULL;
   char *parent_path = NULL;
@@ -301,8 +225,6 @@ filesys_remove (struct dir *start_dir, const char *path)
 
   ASSERT (start_dir != NULL);
   ASSERT (path != NULL);
-
-  PRINT_FREMOVE_2("milestone 1 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
 
   /* Check NAME for validity. */
   if (*path == '\0')
@@ -317,36 +239,28 @@ filesys_remove (struct dir *start_dir, const char *path)
   if (!dir_lookup(start_dir, parent_path, &inode))
     goto done;
 
-  PRINT_FREMOVE_2("milestone 2 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
   parent_dir = dir_open(inode);
   if (parent_dir == NULL)
     goto done;
 
-  PRINT_FREMOVE_2("milestone 2.5 count: %d\n", inode_get_count(dir_get_inode(parent_dir)));
-
-  PRINT_FREMOVE("removing from parent dir\n");
   if (!dir_remove(parent_dir, name))
     goto done;
 
   success = true;
 
   done:
-    PRINT_FREMOVE("starting done\n");
     if (parent_path != NULL)
       free(parent_path);
     if (name != NULL)
       free(name);
-    PRINT_FREMOVE("closing start dir\n");
     if(start_dir != NULL)
       dir_close(start_dir);
-    PRINT_FREMOVE("closing parent dir\n");
     if (parent_dir != NULL)
       dir_close(parent_dir);
     else if (inode != NULL)
       inode_close(inode);
 
 
-    PRINT_FREMOVE_2("succes: %d\n",success);
     return success;
 }
 
@@ -371,7 +285,6 @@ filesys_open_dir(struct dir *start_dir, const char *path)
   struct inode *inode = NULL;
   dir_lookup(start_dir,path,&inode);
 
-  PRINT_FOPEN_DIR_2("inode is: %p\n", inode);
   /* IS WRITING TO DIR FILES ALLOWED? */
   return dir_open(inode);
 }
@@ -379,7 +292,6 @@ filesys_open_dir(struct dir *start_dir, const char *path)
 bool
 split_path(const char *path, char **parent_path, char **name)
 {
-  PRINT_SPLIT_2("path: %s\n", path);
 
   /*bool success = false;*/
 
@@ -416,8 +328,6 @@ split_path(const char *path, char **parent_path, char **name)
   
   memcpy(*name, pivot, name_len);
 
-  PRINT_SPLIT_2("parent: %s\n", *parent_path);
-  PRINT_SPLIT_2("name: %s\n", *name);
 
   return true;
 }
