@@ -5,38 +5,20 @@
 #include <string.h>
 #include <stdio.h>
 
-#if (DEBUG & DEBUG_FILE)
-#define DEBUG_FILE_WRITE      0
-#define DEBUG_FILE_WRITE_AT   0
-#endif
-
-#if DEBUG_FILE_WRITE
-#define PRINT_FILE_WRITE(X) {printf("(file-write) "); printf(X);}
-#define PRINT_FILE_WRITE_2(X,Y) {printf("(file-write) "); printf(X,Y);}
-#else
-#define PRINT_FILE_WRITE(X) do {} while(0)
-#define PRINT_FILE_WRITE_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_FILE_WRITE_AT
-#define PRINT_FILE_WRITE_AT(X) {printf("(file-write-at) "); printf(X);}
-#define PRINT_FILE_WRITE_AT_2(X,Y) {printf("(file-write-at) "); printf(X,Y);}
-#else
-#define PRINT_FILE_WRITE_AT(X) do {} while(0)
-#define PRINT_FILE_WRITE_AT_2(X,Y) do {} while(0)
-#endif
 
 /* An open file. */
 struct file 
   {
-    struct inode *inode;        /* File's inode. */
-    off_t pos;                  /* Current position. */
-    bool deny_write;            /* Has file_deny_write() been called? */
+    struct inode *inode;  /* File's inode. */
+    off_t pos;            /* Current position. */
+    bool deny_write;      /* Has file_deny_write() been called? */
   };
 
 
-
-bool file_create(block_sector_t inode_sector, off_t initial_size){
+/* create a file at sector INODE_SECTOR with size INITIAL_SIZE */
+bool 
+file_create(block_sector_t inode_sector, off_t initial_size)
+{
   inode_create (inode_sector, initial_size, false);
 }
 
@@ -123,8 +105,8 @@ file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs)
 off_t
 file_write (struct file *file, const void *buffer, off_t size) 
 {
-  PRINT_FILE_WRITE_2("size: %d\n", size);
-  off_t bytes_written = inode_write_at (file->inode, buffer, size, file->pos);
+  off_t bytes_written = 
+    inode_write_at (file->inode, buffer, size, file->pos);
   file->pos += bytes_written;
   return bytes_written;
 }
@@ -140,9 +122,6 @@ off_t
 file_write_at (struct file *file, const void *buffer, off_t size,
                off_t file_ofs) 
 {
-  PRINT_FILE_WRITE_AT_2("buffer: %p\n", buffer);
-  PRINT_FILE_WRITE_AT_2("file_ofs: %d\n", file_ofs);
-  PRINT_FILE_WRITE_AT_2("size: %d\n", size);
   return inode_write_at (file->inode, buffer, size, file_ofs);
 }
 

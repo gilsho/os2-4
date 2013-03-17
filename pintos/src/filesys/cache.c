@@ -10,60 +10,6 @@
 #include "threads/synch.h"
 
 
-#if (DEBUG & DEBUG_CACHE)
-#define DEBUG_WRITE_BEHIND       0
-#define DEBUG_CINIT							 0
-#define DEBUG_CPUT							 1
-#define DEBUG_CFETCH						 1
-#define DEBUG_CFETCH_LOOP				 1
-#else
-#define DEBUG_WRITE_BEHIND       0
-#define DEBUG_CINIT							 0
-#define DEBUG_CPUT							 0
-#define DEBUG_CFETCH 						 0
-#define DEBUG_CFETCH_LOOP				 0
-#endif
-
-#if DEBUG_CFETCH_LOOP
-#define PRINT_CFETCH_LOOP(X) {printf("(cache-fetch-loop) "); printf(X);}
-#define PRINT_CFETCH_LOOP_2(X,Y) {printf("(cache-fetch-loop) "); printf(X,Y);}
-#else
-#define PRINT_CFETCH_LOOP(X) do {} while(0)
-#define PRINT_CFETCH_LOOP_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_CFETCH
-#define PRINT_CFETCH(X) {printf("(cache-fetch) "); printf(X);}
-#define PRINT_CFETCH_2(X,Y) {printf("(cache-fetch) "); printf(X,Y);}
-#else
-#define PRINT_CFETCH(X) do {} while(0)
-#define PRINT_CFETCH_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_CPUT
-#define PRINT_CPUT(X) {printf("(cache-put) "); printf(X);}
-#define PRINT_CPUT_2(X,Y) {printf("(cache-put) "); printf(X,Y);}
-#else
-#define PRINT_CPUT(X) do {} while(0)
-#define PRINT_CPUT_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_WRITE_BEHIND
-#define PRINT_WRITE_BEHIND(X) {printf("(write-behind) "); printf(X);}
-#define PRINT_WRITE_BEHIND_2(X,Y) {printf("(write-behind) "); printf(X,Y);}
-#else
-#define PRINT_WRITE_BEHIND(X) do {} while(0)
-#define PRINT_WRITE_BEHIND_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_CINIT
-#define PRINT_CINIT(X) {printf("(cache-init) "); printf(X);}
-#define PRINT_CINIT_2(X,Y) {printf("(cache-init) "); printf(X,Y);}
-#else
-#define PRINT_CINIT(X) do {} while(0)
-#define PRINT_CINIT_2(X,Y) do {} while(0)
-#endif
-
 #define CACHE_SIZE 50
 
 #define CACHE_WAIT_TIME 10
@@ -105,7 +51,6 @@ static struct list list_data;
 static struct lock lock_map;
 static struct lock lock_fetch;
 static struct condition cond_fetch;
-/* static struct condition cond_temp;*/
 static struct list qfetch;
 
 struct fetch_request {
@@ -115,13 +60,11 @@ struct fetch_request {
 };
 
 
-
 /* intialize the cache structures */
 void cache_write_behind_loop(void *_cache_wait);
 void cache_fetch_loop(void *aux UNUSED);
 void cache_fetch(block_sector_t sector,bool meta);
 void cache_flush_entry(struct cache_slot *cs);
-/*void cache_flush_entry(struct cache_entry *ce);*/
 struct cache_entry *cache_put(block_sector_t sector, bool meta UNUSED);
 void cache_slot_init(struct cache_entry *ce);
 void cache_set_dirty(struct cache_slot *cs, bool value);
@@ -130,24 +73,24 @@ void cache_lru_insert(struct cache_entry *ce, bool meta UNUSED);
 void cache_evict(struct cache_entry *ce);
 struct cache_entry *cache_get_entry(block_sector_t sector);
 struct cache_slot* cache_get_slot(struct cache_entry *ce);
-bool cache_cmp(const struct hash_elem *a,const struct hash_elem *b,void *aux UNUSED);
+bool cache_cmp(const struct hash_elem *a,const struct hash_elem *b,
+								void *aux UNUSED);
 unsigned cache_hash_func(const struct hash_elem *e, void *aux UNUSED);
 void hash_clean_entry(struct hash_elem *he, void *aux UNUSED);
-
 
 
 /* intialize the cache structures */
 void
 cache_init(void)
 {
-	hash_init(&cache_hash, &cache_hash_func, &cache_cmp, NULL);	/* hash table for fast lookup	*/
+	/* hash table for fast lookup	*/
+	hash_init(&cache_hash, &cache_hash_func, &cache_cmp, NULL);	
 	list_init(&list_data);	/* list of cached data sectors */
 	/*list_init(&list_meta);*/	/* list of cached meta-data sectors	*/
 	lock_init(&lock_map);
 
 	lock_init(&lock_fetch);
 	cond_init(&cond_fetch);
-	/*cond_init(&cond_temp);*/
 	list_init(&qfetch);
 
 	int i;
@@ -161,7 +104,8 @@ cache_init(void)
 		cs->sector = 0;
 	}
 
-	thread_create ("flusher", 0, &cache_write_behind_loop, (void *)CACHE_WAIT_TIME); 
+	thread_create ("flusher", 0, &cache_write_behind_loop, 
+								(void *)CACHE_WAIT_TIME); 
 	thread_create ("fetcher", 0, &cache_fetch_loop, NULL);
 
 }
@@ -174,18 +118,11 @@ void cache_fetch(block_sector_t sector, bool meta)
 	freq->sector = sector;
 	freq->meta = meta;
 	
-
 	lock_acquire(&lock_fetch);
-	PRINT_CFETCH_2("freq: %p\n",freq);
-	PRINT_CFETCH_2("sector: %d\n",sector);
-
-	/*while (!list_empty(&qfetch))
-		cond_wait(&cond_temp,&lock_fetch);*/
 
 	list_push_back(&qfetch,&freq->elem);
 	cond_signal(&cond_fetch,&lock_fetch);
 	lock_release(&lock_fetch);
-	PRINT_CFETCH("finishing...\n");
 }
 
 void 
@@ -194,25 +131,17 @@ cache_fetch_loop(void *aux UNUSED)
 	while (true)
 	{
 		lock_acquire(&lock_fetch);
-		PRINT_CFETCH_LOOP("milestone 1\n");
-		PRINT_CFETCH_LOOP("milestone 2: acquired lock_fetch.\n");
 		while (list_empty(&qfetch)) {
-			PRINT_CFETCH_LOOP("milestone 3: qfetch empty, waiting...\n");
 			cond_wait(&cond_fetch,&lock_fetch);
 		}
 
-		PRINT_CFETCH_LOOP("milestone 4: new fetch request!\n");
-		struct fetch_request *freq = list_entry(list_pop_front(&qfetch),struct fetch_request, elem);
-		PRINT_CFETCH_LOOP_2("freq: %p\n",freq);
-		PRINT_CFETCH_LOOP_2("sector: %d\n",freq->sector);
+		struct fetch_request *freq = 
+			list_entry(list_pop_front(&qfetch),struct fetch_request, elem);
 		lock_release(&lock_fetch);
 
 		ASSERT(freq != NULL);
 		lock_acquire(&lock_map);
-		PRINT_CFETCH_LOOP("milestone 5: calling cache_put...\n");
 		cache_put(freq->sector,freq->meta);
-		PRINT_CFETCH_LOOP_2("milestone 6: cache_put returned. %d\n",freq->sector);
-		/*cond_signal(&cond_temp,&lock_fetch);*/
 		lock_release(&lock_map);
 		free(freq);
 	}
@@ -222,11 +151,8 @@ cache_fetch_loop(void *aux UNUSED)
 void
 cache_write_behind_loop(void *_cache_wait){
 	int cache_wait = (int)_cache_wait;
-	PRINT_WRITE_BEHIND_2("cache wait is :%d", cache_wait);
 	while(true){
-
 		timer_msleep(cache_wait);
-		PRINT_WRITE_BEHIND("I am about to flush the cache!\n");
 		cache_flush();
 	}
 }
@@ -346,9 +272,6 @@ cache_evict(struct cache_entry *new_ce)
 void
 cache_slot_init(struct cache_entry *ce)
 {
-	PRINT_CINIT_2("sector: %d\n",sector);
-	PRINT_CINIT_2("slot: %d\n",slot);
-
 	struct cache_slot *cs = &cache_array[ce->slot];
 	cs->dirty = false;
 	cs->num_accessors = 0;
@@ -356,10 +279,6 @@ cache_slot_init(struct cache_entry *ce)
 	cs->io_busy = false;
 	cond_init(&cs->io_done);
 }
-
-
-
-
 
 void
 cache_set_dirty(struct cache_slot *cs, bool value)
@@ -440,8 +359,6 @@ cache_write (block_sector_t sector, block_sector_t next_sector,
 	cache_lru_insert(ce, meta);
 	lock_release(&lock_map);
 
-
-	/*ASSERT(ce->slot >= 0 && ce->slot < CACHE_LEN);*/
 	ASSERT(sector_ofs + chunk_size <= BLOCK_SECTOR_SIZE);
 	memcpy (cs->data + sector_ofs, buffer, chunk_size);
 

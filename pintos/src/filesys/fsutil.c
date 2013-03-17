@@ -102,8 +102,6 @@ fsutil_extract (char **argv UNUSED)
   if (root == NULL)
     PANIC("cannot open root dir\n");
 
-  printf("sector of root: %d", dir_get_sector(root));
-
   for (;;)
     {
       const char *file_name;
@@ -130,12 +128,10 @@ fsutil_extract (char **argv UNUSED)
 
           printf ("Putting '%s' into the file system...\n", file_name);
 
-          /*printf("before: sector of root: %d\n", dir_get_sector(root));*/
           /* Create destination file. */
           if (!filesys_create (root, file_name, size, false))
             PANIC ("%s: create failed", file_name);
 
-          /*printf("sector of root: %d\n", dir_get_sector(root));*/
           dst = filesys_open_file (root, file_name);
           if (dst == NULL)
             PANIC ("%s: open failed", file_name);

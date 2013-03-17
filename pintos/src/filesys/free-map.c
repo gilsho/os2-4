@@ -10,27 +10,6 @@ static struct file *free_map_file;   /* Free map file. */
 static struct bitmap *free_map;      /* Free map, one bit per sector. */
 
 
-#if (DEBUG & DEBUG_FREE_MAP)
-#define DEBUG_ALLOC        1
-#else
-#define DEBUG_ALLOC        0
-#endif
-
-#if DEBUG_ALLOC
-static int num_alloc = 0;
-#define INC_ALLOC(cnt)  (num_alloc+=cnt)
-#define DEC_ALLOC(cnt)  (num_alloc-=cnt)
-#define PRINT_NUM_ALLOC() do {} while(0)
-void free_map_print_num_alloc(void) {
-  printf("FREEMAP num_alloc: %d\n", num_alloc);
-}
-#else
-#define INC_ALLOC(cnt) do {} while(0)
-#define DEC_ALLOC(cnt) do {} while(0)
-#define PRINT_NUM_ALLOC() do {} while(0)
-void free_map_print_num_alloc(void) { do{} while(0); }
-#endif
-
 /* Initializes the free map. */
 void
 free_map_init (void) 
@@ -61,10 +40,7 @@ free_map_allocate (size_t cnt, block_sector_t *sectorp)
 
   if (sector != BITMAP_ERROR)
     *sectorp = sector;
-  else
-    PRINT_NUM_ALLOC();
 
-  INC_ALLOC(cnt);
   return sector != BITMAP_ERROR;
 }
 
@@ -75,7 +51,6 @@ free_map_release (block_sector_t sector, size_t cnt)
   ASSERT (bitmap_all (free_map, sector, cnt));
   bitmap_set_multiple (free_map, sector, cnt, false);
   bitmap_write (free_map, free_map_file);
-  DEC_ALLOC(cnt);  
 }
 
 /* Opens the free map file and reads it from disk. */
