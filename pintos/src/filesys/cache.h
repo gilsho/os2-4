@@ -11,10 +11,10 @@ void cache_init(void);
 void cache_flush(void);
 void cache_read (block_sector_t sector, block_sector_t next_sector,
 								 void *buffer, int sector_ofs, 
-								 int chunk_size, bool meta);
+								 int chunk_size);
 void cache_write (block_sector_t sector, block_sector_t next_sector,
 								  const void *buffer, int sector_ofs, 
-								  int chunk_size, bool meta);
+								  int chunk_size);
 
 #define FETCH_NONE -1
 

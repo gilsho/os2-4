@@ -103,7 +103,6 @@ void
 filesys_done (void) 
 {
   cache_flush();
-  free_map_print_num_alloc();
   free_map_close ();
 }
 

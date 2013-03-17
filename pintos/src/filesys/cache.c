@@ -26,15 +26,6 @@ struct cache_slot
 	block_sector_t sector;
 };
 
-/*
-enum sector_type 
-{
-	stype_data,
-	stype_meta,
-
-};
-*/
-
 struct cache_entry
 {
 	struct hash_elem h_elem;
@@ -45,8 +36,7 @@ struct cache_entry
 
 static struct hash cache_hash;
 static struct cache_slot cache_array[CACHE_SIZE];
-static struct list list_data;
-/*static struct list list_meta;*/
+static struct list lru_list;
 
 static struct lock lock_map;
 static struct lock lock_fetch;
@@ -56,20 +46,19 @@ static struct list qfetch;
 struct fetch_request {
 	block_sector_t sector;
 	struct list_elem elem;
-	bool meta;
 };
 
 
 /* intialize the cache structures */
 void cache_write_behind_loop(void *_cache_wait);
 void cache_fetch_loop(void *aux UNUSED);
-void cache_fetch(block_sector_t sector,bool meta);
+void cache_fetch(block_sector_t sector);
 void cache_flush_entry(struct cache_slot *cs);
-struct cache_entry *cache_put(block_sector_t sector, bool meta UNUSED);
+struct cache_entry *cache_put(block_sector_t sector);
 void cache_slot_init(struct cache_entry *ce);
 void cache_set_dirty(struct cache_slot *cs, bool value);
-void cache_lru_remove(struct cache_entry *ce, bool meta UNUSED);
-void cache_lru_insert(struct cache_entry *ce, bool meta UNUSED);
+void cache_lru_remove(struct cache_entry *ce);
+void cache_lru_insert(struct cache_entry *ce);
 void cache_evict(struct cache_entry *ce);
 struct cache_entry *cache_get_entry(block_sector_t sector);
 struct cache_slot* cache_get_slot(struct cache_entry *ce);
@@ -85,8 +74,7 @@ cache_init(void)
 {
 	/* hash table for fast lookup	*/
 	hash_init(&cache_hash, &cache_hash_func, &cache_cmp, NULL);	
-	list_init(&list_data);	/* list of cached data sectors */
-	/*list_init(&list_meta);*/	/* list of cached meta-data sectors	*/
+	list_init(&lru_list);
 	lock_init(&lock_map);
 
 	lock_init(&lock_fetch);
@@ -110,13 +98,12 @@ cache_init(void)
 
 }
 
-void cache_fetch(block_sector_t sector, bool meta)
+void cache_fetch(block_sector_t sector)
 {
 	struct fetch_request *freq = malloc(sizeof(struct fetch_request));
 	if (!freq)
 		PANIC("can't allocate fetch request");
 	freq->sector = sector;
-	freq->meta = meta;
 	
 	lock_acquire(&lock_fetch);
 
@@ -141,7 +128,7 @@ cache_fetch_loop(void *aux UNUSED)
 
 		ASSERT(freq != NULL);
 		lock_acquire(&lock_map);
-		cache_put(freq->sector,freq->meta);
+		cache_put(freq->sector);
 		lock_release(&lock_map);
 		free(freq);
 	}
@@ -188,7 +175,7 @@ cache_flush_entry(struct cache_slot *cs)
 
 /* returns the new cache_entry struct for SECTOR */
 struct cache_entry* 
-cache_put(block_sector_t sector, bool meta UNUSED)
+cache_put(block_sector_t sector)
 {
 	ASSERT(lock_held_by_current_thread(&lock_map));
 	static int next_slot = 0;
@@ -225,7 +212,7 @@ cache_put(block_sector_t sector, bool meta UNUSED)
 		cache_slot_init(ce);	/*remove*/
 			/* load the actual data */
 		block_read (fs_device, ce->sector, &cs->data);
-		list_push_back(&list_data, &ce->l_elem);
+		list_push_back(&lru_list, &ce->l_elem);
 	}
 	return ce;
 }
@@ -239,7 +226,7 @@ cache_evict(struct cache_entry *new_ce)
 {
 	ASSERT(lock_held_by_current_thread(&lock_map));
 
-	struct list_elem *e = list_pop_front(&list_data);
+	struct list_elem *e = list_pop_front(&lru_list);
 	struct cache_entry *old_ce = list_entry(e, struct cache_entry, l_elem);
 	struct cache_slot * cs = cache_get_slot(old_ce);
 
@@ -288,42 +275,35 @@ cache_set_dirty(struct cache_slot *cs, bool value)
 
 /* move the cached SECTOR to the back of lru queue */
 void 
-cache_lru_remove(struct cache_entry *ce, bool meta UNUSED)
+cache_lru_remove(struct cache_entry *ce)
 {
 	list_remove(&ce->l_elem);
-	/*
-	if (meta) {
-		list_push_back(&list_meta, ce->l_elem);
-	} else {
-		list_push_back(&list_data, ce->l_elem);
-	}
-	*/
 }
 
 void
-cache_lru_insert(struct cache_entry *ce, bool meta UNUSED)
+cache_lru_insert(struct cache_entry *ce)
 {
-	list_push_back(&list_data, &ce->l_elem);
+	list_push_back(&lru_list, &ce->l_elem);
 }
 
 
 void 
 cache_read (block_sector_t sector, block_sector_t next_sector, 
-						void *buffer, int sector_ofs, int chunk_size, bool meta)
+						void *buffer, int sector_ofs, int chunk_size)
 {
 	lock_acquire(&lock_map);	
 	struct cache_slot *cs;
 	struct cache_entry *ce;
 	while (true) {
-		ce = cache_put(sector, meta);
+		ce = cache_put(sector);
 		cs = cache_get_slot(ce);
 		if (!cs->io_busy && !cs->pending_evict)
 			break;
 		cond_wait(&cs->io_done,&lock_map);
 	}
 	cs->num_accessors++;
-	cache_lru_remove(ce, meta);	
-	cache_lru_insert(ce, meta);
+	cache_lru_remove(ce);	
+	cache_lru_insert(ce);
 	lock_release(&lock_map);
 
 	/*ASSERT(ce->slot >= 0 && cs->slot < CACHE_LEN);*/
@@ -337,26 +317,26 @@ cache_read (block_sector_t sector, block_sector_t next_sector,
 		cond_signal(&cs->io_done,&lock_map);
 	lock_release(&lock_map);
 	if (next_sector != FETCH_NONE)
-		cache_fetch(next_sector,meta);
+		cache_fetch(next_sector);
 }
 
 void 
 cache_write (block_sector_t sector, block_sector_t next_sector,
-						 const void *buffer, int sector_ofs, int chunk_size, bool meta)
+						 const void *buffer, int sector_ofs, int chunk_size)
 {
 	lock_acquire(&lock_map);	
 	struct cache_slot *cs;
 	struct cache_entry *ce;
 	while (true) {
-		ce = cache_put(sector, meta);
+		ce = cache_put(sector);
 		cs = cache_get_slot(ce);
 		if (!cs->io_busy && !cs->pending_evict)
 			break;
 		cond_wait(&cs->io_done,&lock_map);
 	}
 	cs->num_accessors++;
-	cache_lru_remove(ce, meta);	
-	cache_lru_insert(ce, meta);
+	cache_lru_remove(ce);	
+	cache_lru_insert(ce);
 	lock_release(&lock_map);
 
 	ASSERT(sector_ofs + chunk_size <= BLOCK_SECTOR_SIZE);
@@ -370,7 +350,7 @@ cache_write (block_sector_t sector, block_sector_t next_sector,
 			cond_signal(&cs->io_done,&lock_map);
 	lock_release(&lock_map);
 	if (next_sector != FETCH_NONE)
-		cache_fetch(next_sector,meta);
+		cache_fetch(next_sector);
 }
 
 struct cache_slot* 
