@@ -14,8 +14,6 @@
 
 #define FILENAME_MAX 14
 
-extern struct lock lock_filesys;
-
 void syscall_init (void);
 static void syscall_handler (struct intr_frame *);
 
@@ -48,7 +46,6 @@ void
 syscall_init (void) 
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
-  lock_init (&lock_filesys);
 }
 
 /* Handler for all system calls */
@@ -260,9 +257,7 @@ bool sys_create(int *stack, uint32_t *eax)
   int fname_len = strnlen (file_name, FILENAME_MAX+1);
   if (fname_len > 0 && fname_len <= FILENAME_MAX)
   {
-    lock_acquire(&lock_filesys);
     result = (int) process_create_file (file_name, (off_t) size, false);
-    lock_release(&lock_filesys);
   }
   
   /* push syscall result to the user program */
@@ -281,9 +276,7 @@ bool sys_remove(int *stack, uint32_t *eax)
     return false;
    
   int result;
-  lock_acquire(&lock_filesys);
   result = (int)process_remove_file(file_name);
-  lock_release(&lock_filesys);
   
   /* push syscall result to the user program */
   memcpy(eax, &result, sizeof(uint32_t));
@@ -302,9 +295,7 @@ bool sys_open(int *stack, uint32_t *eax)
     return false;
 
 	if(strnlen(path, PGSIZE) > 0){
-		lock_acquire(&lock_filesys);
 		fd = process_fd_open(path);
-		lock_release(&lock_filesys);
 	}
 
 	/* push syscall result to the user program */
@@ -324,9 +315,7 @@ bool sys_filesize(int *stack, uint32_t *eax)
 	
 	uint32_t file_len;
 	
-	lock_acquire(&lock_filesys);
 	file_len = (uint32_t) file_length (file);
-	lock_release(&lock_filesys);
 	
 	/* push syscall result to the user program */
   memcpy(eax, &file_len, sizeof(uint32_t));
@@ -371,9 +360,7 @@ bool sys_read(int *stack, uint32_t *eax)
 	  }
 	  else /* valid file found */
 	  {
-	    lock_acquire(&lock_filesys);
 	    bytes_read = (int) file_read (file, (void *)buffer, (off_t) size);
-	    lock_release(&lock_filesys);
     }
   }
   	
@@ -413,9 +400,7 @@ bool sys_write(int *stack, uint32_t *eax)
 	  }
 	  else /* valid file found */
 	  {
-		  lock_acquire(&lock_filesys);
 	    bytes_written = (int) file_write (file, buffer, (off_t) size); 
-	    lock_release(&lock_filesys);	
 	  }
 	}
 	
@@ -435,9 +420,7 @@ bool sys_seek(int *stack)
 	if (file == NULL)
 	  return false;
 
-	lock_acquire(&lock_filesys);
 	file_seek (file, (off_t) new_pos);
-	lock_release(&lock_filesys);
 	
 	return true;		
 }
@@ -453,9 +436,7 @@ bool sys_tell(int *stack, uint32_t *eax)
 	
 	unsigned pos;
 	
-	lock_acquire(&lock_filesys);
 	pos = (unsigned) file_tell (file); 
-	lock_release(&lock_filesys);
 	
 	/* push syscall result to the user program */
   memcpy(eax, &pos, sizeof(uint32_t));

@@ -21,9 +21,6 @@
 #include "threads/malloc.h"
 
 
-struct lock lock_filesys; /* a coarse global lock restricting access 
-                            to the file system */
-
 /* This struct contains all the information related to a process */
 struct process_info
 {
@@ -305,10 +302,7 @@ process_exit (void)
   process_fd_close_all(info);
 
   /* allow writes to the executable */
-  if(!lock_held_by_current_thread(&lock_filesys))
-    lock_acquire(&lock_filesys);
   file_close(info->exec_file);
-  lock_release(&lock_filesys);
 
   if(!lock_held_by_current_thread(&info->lock))
     lock_acquire(&(info->lock));
@@ -544,8 +538,6 @@ load (const char *args, void (**eip) (void), void **esp, struct file **file)
   if (!parse_args(args,esp,&file_name))
     goto done;
 
-  lock_acquire(&lock_filesys);
-
   struct dir *wdir = process_get_wdir();
 
   (*file) = filesys_open_file (wdir, file_name);
@@ -641,8 +633,6 @@ load (const char *args, void (**eip) (void), void **esp, struct file **file)
     file_close (*file);
     (*file) = NULL;
   }
-
-  lock_release(&lock_filesys);
 
   return success;
 }
@@ -1042,14 +1032,12 @@ void process_fd_close_all(struct process_info *info)
     ne = list_next (e);
     list_remove(e);
     struct file_desc *desc = list_entry(e,struct file_desc, elem);
-    lock_acquire(&lock_filesys);
 
     if (desc->type == FD_FILE)
       file_close(desc->content.file);
     else
       dir_close(desc->content.dir);
 
-    lock_release(&lock_filesys);
     free(desc);
     e = ne;
   }
