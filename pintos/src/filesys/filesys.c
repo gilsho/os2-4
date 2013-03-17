@@ -99,7 +99,7 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
   block_sector_t inode_sector = 0;
   char *name = NULL;
   struct dir *parent_dir = NULL;
-  /*PRINT_FCREATE_2("start dir 1: %p\n", start_dir);*/
+
   start_dir = dir_reopen(start_dir);
 
 

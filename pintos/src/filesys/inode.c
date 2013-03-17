@@ -20,6 +20,7 @@
 
 #define UNUSED_SECTOR 0
 
+#define UNUSED_WORDS 111
 
 /* On-disk inode.
    Must be exactly BLOCK_SECTOR_SIZE bytes long. */
@@ -31,7 +32,7 @@ struct inode_disk
     off_t length;                          /* File size in bytes. */
     bool is_dir;                           /* True if inode is a director*/
     unsigned magic;                        /* Magic number. */
-    uint32_t unused[111];                  /* Not used. */
+    uint32_t unused[UNUSED_WORDS];                  /* Not used. */
   };
 
 /* Returns the block number that contains the byte offset of a file */
@@ -49,10 +50,10 @@ struct inode
     int open_cnt;                       /* Number of openers. */
     bool removed;                       /* True if deleted, false otherwise. */
     int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
-    struct lock lock_dir;               /* Unused for files */
-    struct lock lock_file;              /* Unused for directories */
-    bool extending;
-    struct condition ready_to_extend;
+    struct lock lock_dir;               /* used for adding/removing from directory */
+    struct lock lock_file;              /* Used to check metadata of file */
+    bool extending;                     /* flag for if file is currently being extended*/
+    struct condition ready_to_extend;   /* condition variable to wait on file being ready to extend */
   };
 
 
@@ -78,7 +79,7 @@ inode_length(const struct inode *inode)
 {
   size_t length;
   off_t sector_ofs = offsetof (struct inode_disk, length);
-  cache_read (inode->sector, FETCH_NONE, &length, sector_ofs, sizeof(size_t)); 
+  cache_read (inode->sector, FETCH_NONE, &length, sector_ofs, sizeof(size_t),true); 
   return length;
 } 
 
@@ -86,7 +87,7 @@ void
 inode_set_length(struct inode *inode, int length)
 {
   off_t sector_ofs = offsetof (struct inode_disk, length);
-  cache_write (inode->sector, FETCH_NONE, &length, sector_ofs, sizeof(size_t)); 
+  cache_write (inode->sector, FETCH_NONE, &length, sector_ofs, sizeof(size_t),true); 
 }
 
 block_sector_t 
@@ -95,7 +96,7 @@ inode_get_direct_sector(const struct inode *inode, int index)
   block_sector_t direct[N_DIRECT_PTRS];
   off_t sector_ofs = offsetof (struct inode_disk, direct);
   cache_read (inode->sector, FETCH_NONE, 
-          &direct, sector_ofs, sizeof(block_sector_t)*N_DIRECT_PTRS); 
+          &direct, sector_ofs, sizeof(block_sector_t)*N_DIRECT_PTRS,true); 
   return direct[index];
 }
 
@@ -104,7 +105,7 @@ inode_set_direct_sector(const struct inode *inode, int index, block_sector_t dir
 {
   off_t sector_ofs = offsetof (struct inode_disk, direct) + index * sizeof(block_sector_t);
   cache_write (inode->sector, FETCH_NONE, 
-          &direct, sector_ofs, sizeof(block_sector_t)); 
+          &direct, sector_ofs, sizeof(block_sector_t),true); 
 }
 
 block_sector_t 
@@ -113,7 +114,7 @@ inode_get_indirect_sector_table(const struct inode *inode)
   block_sector_t indirect;
   off_t sector_ofs = offsetof(struct inode_disk, indirect);
   cache_read(inode->sector, FETCH_NONE, 
-          &indirect, sector_ofs, sizeof(block_sector_t));
+          &indirect, sector_ofs, sizeof(block_sector_t),true);
   return indirect;
 }
 
@@ -122,7 +123,7 @@ inode_set_indirect_sector_table(const struct inode *inode, block_sector_t indire
 {
   off_t sector_ofs = offsetof(struct inode_disk, indirect);
   cache_write(inode->sector, FETCH_NONE,
-          &indirect, sector_ofs, sizeof(block_sector_t));
+          &indirect, sector_ofs, sizeof(block_sector_t),true);
 }
 
 block_sector_t 
@@ -131,7 +132,7 @@ inode_get_dbl_indirect_sector_table(const struct inode *inode)
   block_sector_t dbl_indirect;
   off_t sector_ofs = offsetof(struct inode_disk,dbl_indirect);
   cache_read(inode->sector, FETCH_NONE,
-        &dbl_indirect, sector_ofs, sizeof(block_sector_t)); 
+        &dbl_indirect, sector_ofs, sizeof(block_sector_t),true); 
   return dbl_indirect;
 }
 
@@ -140,7 +141,7 @@ inode_set_dbl_indirect_sector_table(const struct inode *inode, block_sector_t db
 {
   off_t sector_ofs = offsetof(struct inode_disk,dbl_indirect);
   cache_write(inode->sector, FETCH_NONE,
-        &dbl_indirect, sector_ofs, sizeof(block_sector_t)); 
+        &dbl_indirect, sector_ofs, sizeof(block_sector_t),true); 
 }
 
 block_sector_t 
@@ -149,7 +150,7 @@ inode_get_sector_table_entry(block_sector_t sector_table, int index)
   block_sector_t sector_entry;
   off_t sector_ofs =  index * sizeof(block_sector_t);
   cache_read (sector_table, FETCH_NONE,
-        &sector_entry, sector_ofs, sizeof(block_sector_t)); 
+        &sector_entry, sector_ofs, sizeof(block_sector_t),true); 
   return sector_entry;
 }
 
@@ -158,7 +159,7 @@ inode_set_sector_table_entry(block_sector_t sector_table, int index, block_secto
 { 
   off_t sector_ofs =  index * sizeof(block_sector_t);
   cache_write (sector_table, FETCH_NONE,
-      &sector_entry, sector_ofs, sizeof(block_sector_t)); 
+      &sector_entry, sector_ofs, sizeof(block_sector_t),true); 
 }
 
 /* Returns the block device sector that contains byte offset POS
@@ -248,7 +249,7 @@ inode_create (block_sector_t sector, off_t length, bool is_dir)
   disk_inode->magic = INODE_MAGIC;
   disk_inode->is_dir = is_dir;
 
-  cache_write(sector, FETCH_NONE, disk_inode, 0, BLOCK_SECTOR_SIZE);
+  cache_write(sector, FETCH_NONE, disk_inode, 0, BLOCK_SECTOR_SIZE, true);
 
   /* dummy i-node for file initialization */
   struct inode inode;
@@ -355,11 +356,8 @@ inode_open (block_sector_t sector)
     {
       inode = list_entry (e, struct inode, elem);
 
-      /*PRINT_OPEN_2("inode: %p\n", inode);
-      PRINT_OPEN_2("inode_sector: %d\n", inode->sector);*/
       if (inode->sector == sector) 
         {
-          /*PRINT_OPEN("inode in memory\n");*/
           inode_reopen (inode);
           lock_release(&inode_list_lock);
           return inode; 
@@ -499,7 +497,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
 
 
       cache_read(sector_idx, next_sector_idx, buffer + bytes_read, sector_ofs, 
-                  chunk_size);
+                  chunk_size, false);
       
       /* Advance. */
       size -= chunk_size;
@@ -633,7 +631,7 @@ inode_zero_sector(block_sector_t sector, bool meta)
 {
   char zeros [BLOCK_SECTOR_SIZE];
   memset(zeros, 0, BLOCK_SECTOR_SIZE);
-  cache_write(sector, FETCH_NONE, zeros, 0, BLOCK_SECTOR_SIZE);
+  cache_write(sector, FETCH_NONE, zeros, 0, BLOCK_SECTOR_SIZE, meta);
 }
 
 
@@ -700,16 +698,13 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
       break;
 
     cache_write (sector_idx, next_sector_idx, buffer + bytes_written, 
-                 sector_ofs, chunk_size);
+                 sector_ofs, chunk_size, false);
 
     /* Advance. */
     size -= chunk_size;
     offset += chunk_size;
     bytes_written += chunk_size;
   }
-
-  /*PRINT_FREE_MAP_2(2,"bytes_written: %d\n", bytes_written);
-  PRINT_WRITE_2(1,"bytes_written: %d\n", bytes_written);*/
 
   done:
     
@@ -754,7 +749,7 @@ inode_isdir(struct inode *inode)
 
   bool isdir;
   off_t sector_ofs = offsetof(struct inode_disk, is_dir);
-  cache_read(inode->sector, FETCH_NONE, &isdir, sector_ofs, sizeof(bool)); 
+  cache_read(inode->sector, FETCH_NONE, &isdir, sector_ofs, sizeof(bool),true); 
   return isdir; 
 }
 

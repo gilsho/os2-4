@@ -37,6 +37,8 @@ All parts were implemented together with equal contribution.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+#define UNUSED_WORDS 111
+
 struct inode_disk
   {
     block_sector_t direct[N_DIRECT_PTRS];  /* first-order data sector. */
@@ -45,7 +47,16 @@ struct inode_disk
     off_t length;                          /* File size in bytes. */
     bool is_dir;                           /* True if inode is a director*/
     unsigned magic;                        /* Magic number. */
-    uint32_t unused[111];                  /* Not used. */
+    uint32_t unused[UNUSED_WORDS];                  /* Not used. */
+  };
+
+/* In-memory inode. */
+struct inode 
+  {
+    struct lock lock_dir;               /* used for adding/removing from directory */
+    struct lock lock_file;              /* Used to check metadata of file */
+    bool extending;                     /* flag for if file is currently being extended*/
+    struct condition ready_to_extend;   /* condition variable to wait on file being ready 																			to extend */
   };
 
 >> A2: What is the maximum size of a file supported by your inode
@@ -190,6 +201,13 @@ accesses (3 seeks).
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+/* Constant to set the initial size of a directory to account for
+	'.' and '..' */
+#define EMPTY_DIR_SIZE (2 * sizeof(struct dir_entry))
+
+/* Current working directory of a process. Stored on thread struct */
+struct dir *wdir;
+
 ---- ALGORITHMS ----
 
 >> B2: Describe your code for traversing a user-specified path.  How
@@ -267,6 +285,48 @@ the main thread.
 >> C1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+
+#define CACHE_SIZE 50
+
+#define CACHE_WAIT_TIME 10
+
+/* represents a slot in the cache */
+struct cache_slot
+{
+	char data[BLOCK_SECTOR_SIZE];
+	/* synchronization */
+	int num_accessors; /* number of processes currently accessing this slot */
+	bool pending_evict; /* Indicates if slot has been scheduled for eviction */
+	bool io_busy;       /* Reading in or writing out slot to disk */
+	struct condition io_done; /* signaled when */
+	bool dirty;					/* slot has been modified in memory */
+	block_sector_t sector; /* sector on disk being stored in slot */
+};
+
+struct cache_entry
+{
+	struct hash_elem h_elem;  /* elem for cache hash */
+	struct list_elem l_elem;  /* elem for lru list */
+	block_sector_t sector;   /* sector on disk corresponding to this cache entry*/
+	int slot; 								/* cache slot for this cache entry */
+};
+
+static struct hash cache_hash; /* hash map mapping a sector to the cache slot 
+																containing its data*/
+static struct cache_slot cache_array[CACHE_SIZE]; /* the cache */
+static struct list lru_list; /* cache slots ordered by recent use */
+
+static struct lock lock_map; /* lock for cache map */
+static struct lock lock_fetch; /* lock for read-ahead queue */
+static struct list qfetch; /* queue of read-ahead requests */
+static struct condition cond_fetch; /* signals read-ahead queue not empty */
+
+/* data structure for read-ahead fetch request */
+struct fetch_request {
+	block_sector_t sector; /* sector on disk to fetch */
+	struct list_elem elem; /* elem for read-ahead queue */
+};
+
 
 ---- ALGORITHMS ----
 
