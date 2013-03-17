@@ -19,7 +19,7 @@ struct file
 bool 
 file_create(block_sector_t inode_sector, off_t initial_size)
 {
-  inode_create (inode_sector, initial_size, false);
+  return inode_create (inode_sector, initial_size, false);
 }
 
 /* Opens a file for the given INODE, of which it takes ownership,

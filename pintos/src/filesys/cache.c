@@ -10,7 +10,7 @@
 #include "threads/synch.h"
 
 
-#define CACHE_SIZE 63
+#define CACHE_SIZE 50
 
 #define CACHE_WAIT_TIME 10
 
@@ -316,7 +316,7 @@ cache_read (block_sector_t sector, block_sector_t next_sector,
 	if (cs->num_accessors == 0)
 		cond_signal(&cs->io_done,&lock_map);
 	lock_release(&lock_map);
-	if (next_sector != FETCH_NONE)
+	if ((int)next_sector != FETCH_NONE)
 		cache_fetch(next_sector);
 }
 
@@ -349,7 +349,7 @@ cache_write (block_sector_t sector, block_sector_t next_sector,
 	if (cs->num_accessors == 0)
 			cond_signal(&cs->io_done,&lock_map);
 	lock_release(&lock_map);
-	if (next_sector != FETCH_NONE)
+	if ((int)next_sector != FETCH_NONE)
 		cache_fetch(next_sector);
 }
 
