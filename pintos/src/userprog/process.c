@@ -49,7 +49,10 @@ struct process_info
 };
 
 
-/* This struct is used to pass more than one variable between a parent process' process_execute call and a child process' start_process function. */
+/*
+This struct is used to pass more than one variable between a 
+parent process' process_execute call and a child process' 
+start_process function. */
 
 struct process_init_data
 {
@@ -70,46 +73,12 @@ struct process_init_data
 struct file_desc
 {
   int fd;						      /* the file descriptor associated with the file */
-  union fd_content content;			/* a handle to the file struct associated with fd */
+  union fd_content content;	/* a handle to the file struct assoc. with fd*/
   enum fd_type type;
   struct list_elem elem;	/* a list elem used to embed this struct within a 
                             process' list of active files */
 };
 
-
-#if (DEBUG & DEBUG_PROCESS)
-#define DEBUG_PROCESS_CHDIR      1
-#define DEBUG_PROCESS_START      1
-#define DEBUG_GET_START_DIR      1
-#else
-#define DEBUG_PROCESS_CHDIR      0
-#define DEBUG_PROCESS_START      0
-#define DEBUG_GET_START_DIR      0
-#endif
-
-#if DEBUG_PROCESS_CHDIR
-#define PRINT_PROCESS_CHDIR(X) {printf("(process_chdir) "); printf(X);}
-#define PRINT_PROCESS_CHDIR_2(X,Y) {printf("(process_chdir) "); printf(X,Y);}
-#else
-#define PRINT_PROCESS_CHDIR(X) do {} while(0)
-#define PRINT_PROCESS_CHDIR_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_PROCESS_START
-#define PRINT_PROCESS_START(X) {printf("(process_start) "); printf(X);}
-#define PRINT_PROCESS_START_2(X,Y) {printf("(process_start) "); printf(X,Y);}
-#else
-#define PRINT_PROCESS_START(X) do {} while(0)
-#define PRINT_PROCESS_START_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_GET_START_DIR
-#define PRINT_GET_START_DIR(X) {printf("(process-get-start-dir) "); printf(X);}
-#define PRINT_GET_START_DIR_2(X,Y) {printf("(process-get-start-dir) "); printf(X,Y);}
-#else
-#define PRINT_GET_START_DIR(X) do {} while(0)
-#define PRINT_GET_START_DIR_2(X,Y) do {} while(0)
-#endif
 
 /* skip STDIN(0) and STDOUT(1) */
 #define FILE_DESCRIPTOR_START 2
@@ -153,9 +122,11 @@ void process_init(void)
   t->process_info = main_info;
 }
 
-/* Initialize data needed to start a process. The sema and load_status are used
+/* Initialize data needed to start a process. 
+  The sema and load_status are used
 to synchronize the parent waiting till load is complete */
-void process_set_init_data(struct process_init_data *init_data, char *args_copy){
+void process_set_init_data(struct process_init_data *init_data, 
+                            char *args_copy){
   init_data->args = args_copy;
   sema_init(&(init_data->sema), 0);
   init_data->load_status = false;
@@ -201,9 +172,11 @@ process_execute (const char *args)
   
   /* add the new child to current processes' children */
   struct process_info *info = thread_current()->process_info;
-  list_push_back(&(info->children), &(child_info->child_elem)); /* add to children list */
+  /* add to children list */
+  list_push_back(&(info->children), &(child_info->child_elem)); 
 
-  tid = thread_create (thread_name, PRI_DEFAULT, start_process, (void *)&init_data);
+  tid = thread_create (thread_name, PRI_DEFAULT, start_process, 
+                        (void *)&init_data);
   
   if(tid != TID_ERROR)
   {
@@ -224,7 +197,8 @@ process_execute (const char *args)
 static void
 start_process (void * init_data_)
 {
-  struct process_init_data *init_data = (struct process_init_data *)init_data_;
+  struct process_init_data *init_data = 
+    (struct process_init_data *)init_data_;
   char *args = init_data->args;
 
   struct intr_frame if_;
@@ -968,38 +942,6 @@ int process_fd_add(union fd_content content, enum fd_type type)
   return desc->fd;
 }
 
-/*
-int 
-process_fd_add_file(struct file *file)
-{
-  union fd_content content;
-  content.file = file;
-  return process_fd_add(content, FD_FILE);
-}
-
-int 
-process_fd_add_dir(struct dir *dir)
-{
-  union fd_content content;
-  content.dir = dir;
-  return process_fd_add(content, FD_DIR);
-}
-*/
-
-/*
-int process_fd_add_desc(struct file_desc *desc)
-{
-  struct process_info *info = thread_current()->process_info;
-  struct list *fd_list = &(info->fd_list);
-
-  desc->fd = info->next_fd;
-  info->next_fd++;
-
-  list_push_back(fd_list,&(desc->elem));
-  return desc->fd;
-}
-*/
-
 /* Retrieves the file associated with a given file descriptor for the 
    current thread*/
 struct file* 
@@ -1026,10 +968,8 @@ bool process_chdir(const char *path)
   struct dir *start_dir = process_get_start_dir(path);
   /* assume no spaces before absolute paths */
 
-  PRINT_PROCESS_CHDIR_2("Path is: %s\n", path);
   bool success;
   struct dir *new_wdir = filesys_open_dir(start_dir,path);
-  PRINT_PROCESS_CHDIR_2("new_wdir is: %p\n", new_wdir);
 
   if (new_wdir != NULL) {
     dir_close(t->wdir);
@@ -1048,27 +988,14 @@ bool process_chdir(const char *path)
 /* Caller must close directory */
 struct dir*
 process_get_start_dir(const char *path){
-  PRINT_GET_START_DIR_2("path: %s\n",path);
   struct dir *start_dir;
   if (path[0] == '/') {
-    PRINT_GET_START_DIR("absolute path detected\n");
     start_dir = dir_open_root();
   } else {
-    PRINT_GET_START_DIR("relative path detected\n");
     start_dir = dir_reopen(thread_current()->wdir);
   }
-  PRINT_GET_START_DIR_2("start_dir sector: %d\n",dir_get_sector(start_dir));
   return start_dir;
 }
-
-/*
-struct file *
-process_open_file(const char *name)
-{
-  struct dir *start_dir = process_get_start_dir(name);
-  return filesys_open (start_dir,name);
-}
-*/
 
 bool
 process_create_file(const char *path, off_t size, bool is_dir){
@@ -1128,18 +1055,22 @@ void process_fd_close_all(struct process_info *info)
   }
 }
 
+/* returns DIR, the current process' wdir*/
 struct dir* 
 process_get_wdir(void)
 {
   return thread_current()->wdir;
 }
 
+/* sets the current process' wdir */
 void 
 process_set_wdir(struct dir *wdir)
 {
   thread_current()->wdir = wdir;
 }
 
+/* open a file/dir at PATH and return the 
+   user fd number */
 int
 process_fd_open(const char *path)
 {
@@ -1150,6 +1081,8 @@ process_fd_open(const char *path)
   return process_fd_add(content, type);
 }
 
+/* return the inumber associated with the user fd,
+    returns -1 if not found */
 int 
 process_fd_inumber(int fd)
 {

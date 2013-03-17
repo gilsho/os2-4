@@ -119,7 +119,6 @@ syscall_handler (struct intr_frame *f)
 
 		default:
 			success = false;
-			printf("unrecognized system call\n");
 			break;
 	}
 
@@ -477,6 +476,10 @@ bool sys_close(int *stack)
 	return process_fd_close(fd);
 }
 
+/* Changes the current working directory of the process to dir,
+ which may be relative or absolute. Returns true if successful, 
+ false on failure.
+*/
 bool sys_chdir(int *stack, uint32_t *eax)
 {
 	char *dir_name = (char *)pop_arg(&stack);
@@ -486,7 +489,13 @@ bool sys_chdir(int *stack, uint32_t *eax)
 	return true;
 }
 
-bool sys_mkdir(int *stack, uint32_t *eax)
+/* Creates the directory named dir, which may be relative or absolute. 
+  Returns true if successful, false on failure. Fails if dir already 
+  exists or if any directory name in dir, besides the last, 
+  does not already exist.
+ */
+bool 
+sys_mkdir(int *stack, uint32_t *eax)
 {
 	char *dir_name = (char *)pop_arg(&stack);
 	int result = 0;
@@ -499,7 +508,14 @@ bool sys_mkdir(int *stack, uint32_t *eax)
 
 }
 
-bool sys_readdir(int *stack, uint32_t *eax)
+/* Reads a directory entry from file descriptor fd, 
+   which must represent a directory. If successful, stores the 
+   null-terminated file name in name, which must have 
+   room for READDIR_MAX_LEN + 1 bytes, and returns true. 
+   If no entries are left in the directory, returns false.
+*/
+bool 
+sys_readdir(int *stack, uint32_t *eax)
 {
 	int fd = (int)pop_arg(&stack);
 	char *name = (char *)pop_arg(&stack);
@@ -513,7 +529,12 @@ bool sys_readdir(int *stack, uint32_t *eax)
 	return true;
 }
 
-bool sys_isdir(int *stack, uint32_t *eax)
+
+/* Returns true if fd represents a directory, 
+   false if it represents an ordinary file.
+   */
+bool 
+sys_isdir(int *stack, uint32_t *eax)
 {
 	int fd = (int)pop_arg(&stack);
 	struct dir *dir = process_fd_get_dir(fd);
@@ -526,7 +547,10 @@ bool sys_isdir(int *stack, uint32_t *eax)
 
 }
 
-bool sys_inumber(int *stack, uint32_t *eax)
+/* Returns the inode number of the inode associated with fd, 
+   which may represent an ordinary file or a directory. */
+bool 
+sys_inumber(int *stack, uint32_t *eax)
 {
 	int fd = (int) pop_arg(&stack);
 
