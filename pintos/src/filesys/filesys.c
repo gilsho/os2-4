@@ -92,7 +92,8 @@ bool filesys_resolve_path(struct dir* start_dir, const char *path,
    Fails if a file named NAME already exists,
    or if internal memory allocation fails. */
 bool
-filesys_create (struct dir *start_dir, const char *path, off_t initial_size, bool is_dir) 
+filesys_create (struct dir *start_dir, const char *path, off_t initial_size, 
+                bool is_dir) 
 {
   /* TODO: CHECK REMOVED FLAG */
   bool success = false;

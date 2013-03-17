@@ -42,8 +42,8 @@ All parts were implemented together with equal contribution.
 struct inode_disk
   {
     block_sector_t direct[N_DIRECT_PTRS];  /* first-order data sector. */
-    block_sector_t indirect;							/* sector containing pointers to other 
-    																				sectors*/
+    block_sector_t indirect;							/* sector containing pointers to 
+    																				other sectors*/
     block_sector_t dbl_indirect;					/* doubly indirect sector*/
     off_t length;                          /* File size in bytes. */
     bool is_dir;                           /* True if inode is a director*/

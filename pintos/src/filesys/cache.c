@@ -10,7 +10,7 @@
 #include "threads/synch.h"
 
 
-#define CACHE_SIZE 50
+#define CACHE_SIZE 63
 
 #define CACHE_WAIT_TIME 10
 

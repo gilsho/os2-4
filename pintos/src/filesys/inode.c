@@ -50,10 +50,13 @@ struct inode
     int open_cnt;                       /* Number of openers. */
     bool removed;                       /* True if deleted, false otherwise. */
     int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
-    struct lock lock_dir;               /* used for adding/removing from directory */
+    struct lock lock_dir;               /* used for adding/removing from 
+                                           directory */
     struct lock lock_file;              /* Used to check metadata of file */
-    bool extending;                     /* flag for if file is currently being extended*/
-    struct condition ready_to_extend;   /* condition variable to wait on file being ready to extend */
+    bool extending;                     /* flag for if file is currently being 
+                                           extended*/
+    struct condition ready_to_extend;   /* condition variable to wait on file 
+                                           being ready to extend */
   };
 
 
@@ -62,13 +65,18 @@ void inode_free_sectors(struct inode *inode, int start_block,
 off_t inode_length(const struct inode *inode);
 void inode_set_length(struct inode *inode, int length);
 block_sector_t inode_get_direct_sector(const struct inode *inode, int index);
-void inode_set_direct_sector(const struct inode *inode, int index, block_sector_t direct);
+void inode_set_direct_sector(const struct inode *inode, int index, 
+                             block_sector_t direct);
 block_sector_t inode_get_indirect_sector_table(const struct inode *inode);
-void inode_set_indirect_sector_table(const struct inode *inode, block_sector_t indirect);
+void inode_set_indirect_sector_table(const struct inode *inode, 
+                                     block_sector_t indirect);
 block_sector_t inode_get_dbl_indirect_sector_table(const struct inode *inode);
-void inode_set_dbl_indirect_sector_table(const struct inode *inode, block_sector_t dbl_indirect);
-block_sector_t inode_get_sector_table_entry(block_sector_t sector_table, int index);
-void inode_set_sector_table_entry(block_sector_t sector_table, int index, block_sector_t sector_entry);
+void inode_set_dbl_indirect_sector_table(const struct inode *inode, 
+                                         block_sector_t dbl_indirect);
+block_sector_t inode_get_sector_table_entry(block_sector_t sector_table, 
+                                            int index);
+void inode_set_sector_table_entry(block_sector_t sector_table, int index, 
+                                  block_sector_t sector_entry);
 off_t inode_extend(struct inode *inode, int old_length, int new_length);
 void inode_zero_sector(block_sector_t sector);
 
@@ -101,9 +109,11 @@ inode_get_direct_sector(const struct inode *inode, int index)
 }
 
 void
-inode_set_direct_sector(const struct inode *inode, int index, block_sector_t direct)
+inode_set_direct_sector(const struct inode *inode, int index, 
+                         block_sector_t direct)
 {
-  off_t sector_ofs = offsetof (struct inode_disk, direct) + index * sizeof(block_sector_t);
+  off_t sector_ofs = offsetof (struct inode_disk, direct) + 
+                                          index * sizeof(block_sector_t);
   cache_write (inode->sector, FETCH_NONE, 
           &direct, sector_ofs, sizeof(block_sector_t)); 
 }
@@ -119,7 +129,8 @@ inode_get_indirect_sector_table(const struct inode *inode)
 }
 
 void
-inode_set_indirect_sector_table(const struct inode *inode, block_sector_t indirect)
+inode_set_indirect_sector_table(const struct inode *inode, 
+                                block_sector_t indirect)
 {
   off_t sector_ofs = offsetof(struct inode_disk, indirect);
   cache_write(inode->sector, FETCH_NONE,
@@ -137,7 +148,8 @@ inode_get_dbl_indirect_sector_table(const struct inode *inode)
 }
 
 void
-inode_set_dbl_indirect_sector_table(const struct inode *inode, block_sector_t dbl_indirect)
+inode_set_dbl_indirect_sector_table(const struct inode *inode, 
+                                    block_sector_t dbl_indirect)
 {
   off_t sector_ofs = offsetof(struct inode_disk,dbl_indirect);
   cache_write(inode->sector, FETCH_NONE,
@@ -155,7 +167,8 @@ inode_get_sector_table_entry(block_sector_t sector_table, int index)
 }
 
 void
-inode_set_sector_table_entry(block_sector_t sector_table, int index, block_sector_t sector_entry)
+inode_set_sector_table_entry(block_sector_t sector_table, int index, 
+                              block_sector_t sector_entry)
 { 
   off_t sector_ofs =  index * sizeof(block_sector_t);
   cache_write (sector_table, FETCH_NONE,
@@ -191,13 +204,16 @@ byte_to_sector (const struct inode *inode, off_t length, off_t pos)
     return inode_get_sector_table_entry(indirect_table,trunc_block_num);
   } 
 
-  else if (block_num < (int) (N_DBL_INDIRECT_PTRS + N_INDIRECT_PTRS + N_DIRECT_PTRS)) 
+  else if (block_num < (int) (N_DBL_INDIRECT_PTRS + N_INDIRECT_PTRS + 
+                              N_DIRECT_PTRS)) 
   {    
     int trunc_block_num = (block_num - N_DIRECT_PTRS - N_INDIRECT_PTRS);
-    block_sector_t dbl_indirect_table = inode_get_dbl_indirect_sector_table(inode);
+    block_sector_t dbl_indirect_table = 
+                                    inode_get_dbl_indirect_sector_table(inode);
     
     int index = trunc_block_num / N_INDIRECT_PTRS;
-    block_sector_t indirect_table = inode_get_sector_table_entry(dbl_indirect_table,index);
+    block_sector_t indirect_table = 
+                      inode_get_sector_table_entry(dbl_indirect_table,index);
 
     index = trunc_block_num % N_INDIRECT_PTRS;
     return inode_get_sector_table_entry(indirect_table,index);
@@ -270,7 +286,8 @@ inode_free_sectors(struct inode *inode, int start_block,
 {
 
   ASSERT(end_block >= start_block);
-  ASSERT(end_block < (int) (N_DIRECT_PTRS + N_INDIRECT_PTRS + N_DBL_INDIRECT_PTRS));
+  ASSERT(end_block < (int) (N_DIRECT_PTRS + N_INDIRECT_PTRS + 
+                            N_DBL_INDIRECT_PTRS));
 
   if(inode_length(inode) <= 0)
     return;
@@ -293,7 +310,8 @@ inode_free_sectors(struct inode *inode, int start_block,
       block_sector_t indirect_table = inode_get_indirect_sector_table(inode);
 
       int trunc_cur_block = cur_block - N_DIRECT_PTRS;
-      block_sector_t stale_sector = inode_get_sector_table_entry(indirect_table, trunc_cur_block);
+      block_sector_t stale_sector = inode_get_sector_table_entry(indirect_table, 
+                                    trunc_cur_block);
       free_map_release (stale_sector, 1);
       inode_set_sector_table_entry(indirect_table,trunc_cur_block,0);
 
@@ -314,9 +332,10 @@ inode_free_sectors(struct inode *inode, int start_block,
       int dbl_indirect_idx = trunc_cur_block / BLOCK_SECTOR_SIZE;
       int indirect_idx = trunc_cur_block % BLOCK_SECTOR_SIZE;
 
-      block_sector_t dbl_indirect_table = inode_get_dbl_indirect_sector_table(inode);
-      block_sector_t indirect_table = inode_get_sector_table_entry(dbl_indirect_table,
-                                      dbl_indirect_idx);
+      block_sector_t dbl_indirect_table = 
+                                inode_get_dbl_indirect_sector_table(inode);
+      block_sector_t indirect_table = 
+            inode_get_sector_table_entry(dbl_indirect_table,dbl_indirect_idx);
       block_sector_t stale_sector = inode_get_sector_table_entry(indirect_table, 
                                       indirect_idx);
 
@@ -325,7 +344,8 @@ inode_free_sectors(struct inode *inode, int start_block,
 
       if (indirect_idx == 0) {
         free_map_release(indirect_table,1);
-        inode_set_sector_table_entry(dbl_indirect_table,dbl_indirect_idx,UNUSED_SECTOR);
+        inode_set_sector_table_entry(dbl_indirect_table,
+                                     dbl_indirect_idx,UNUSED_SECTOR);
       }
 
       if (cur_block == N_DIRECT_PTRS + N_INDIRECT_PTRS) {
@@ -568,10 +588,12 @@ inode_extend(struct inode *inode, int old_length, int new_length)
     }
 
     /* allocate new double indirect sector */
-    else if (cur_block <  (int) (N_DBL_INDIRECT_PTRS + N_INDIRECT_PTRS + N_DIRECT_PTRS))
+    else if (cur_block <  (int) (N_DBL_INDIRECT_PTRS + N_INDIRECT_PTRS +  
+                                 N_DIRECT_PTRS))
     {
       /* allocate double indirect table if necessary */
-      block_sector_t dbl_indirect_table = inode_get_dbl_indirect_sector_table(inode);
+      block_sector_t dbl_indirect_table = 
+                              inode_get_dbl_indirect_sector_table(inode);
       if (dbl_indirect_table == UNUSED_SECTOR)
       {
         if(!free_map_allocate(1, &dbl_indirect_table)) {
@@ -595,11 +617,13 @@ inode_extend(struct inode *inode, int old_length, int new_length)
           break;
         }
         inode_zero_sector(indirect_table);
-        inode_set_sector_table_entry(dbl_indirect_table, dbl_indirect_index, indirect_table);
+        inode_set_sector_table_entry(dbl_indirect_table, dbl_indirect_index, 
+                                      indirect_table);
       } 
       else 
       {
-        indirect_table = inode_get_sector_table_entry(dbl_indirect_table, dbl_indirect_index);
+        indirect_table = inode_get_sector_table_entry(dbl_indirect_table, 
+                                                      dbl_indirect_index);
       }
 
 
@@ -682,7 +706,8 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
   {
     /* Sector to write, starting byte offset within sector. */
     block_sector_t sector_idx = byte_to_sector (inode, my_length, offset);
-    block_sector_t next_sector_idx = byte_to_sector (inode, my_length, offset+BLOCK_SECTOR_SIZE);
+    block_sector_t next_sector_idx = byte_to_sector (inode, my_length, 
+                                                  offset+BLOCK_SECTOR_SIZE);
 
     int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
