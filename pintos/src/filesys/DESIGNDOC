@@ -59,12 +59,27 @@ brings the total filesize to 8526848 bytes.
 >> extend a file at the same time.
 
 Synchronization is enforced at the inode level for both files and
-directories. The kernel detects if an inode extension is necessary 
-by comparing the current length of an inode and the required length 
-of the inode after a write operation. If an extension is needed,
-the lock for that specific inode is acquired and held during allocation
-of additional blocks, as well as during the write operation to those 
-blocks. The lock is released when the write operation is completed.
+directories. Each inode contains a flag indicating if an extension
+is in process and a condition variable associated with that extension 
+flag. Read and write operations do not hold the inode during execution, 
+however the lock must be acquired briefly to examine an inode's metadata 
+(the extending flag and file length).
+
+Only one process may extend a file at any given time. The kernel detects 
+if an inode extension is necessary by examining the length of the inode
+after a write operation. If an extension is necessary and the extension 
+flag is clear, the process sets the extension flag, releases the lock,
+and proceeds to allocate and write the extended region. If the process
+attempts to extend but cannot because another is extending, the process 
+waits on a condition variable until the previous extension is complete. 
+Upon waking, it will determine again if an extension is necessary.
+
+Once allocation and writing of the extended region is complete, the 
+process reacquires the inode metadata lock and updates the file length 
+to reflect the extension. This allows other processes  to read and write
+(but not extend) the inode concurrently because they will not observe 
+the change in file length until the extension is complete and therefore
+will not attempt to access the extended file region.
 
 
 >> A4: Suppose processes A and B both have file F open, both
@@ -74,7 +89,12 @@ blocks. The lock is released when the write operation is completed.
 >> nonzero data, A is not allowed to see all zeros.  Explain how your
 >> code avoids this race.
 
-
+Our implementation of file extension occurs 'behind the scenes' such
+that any read operation by process A is oblivious to an ongoing extension
+by process B. Since process B will synchronously update the file length
+only after the extension (allocation and writing) is complete, process A 
+will read all or none of the extended file region based the file length
+it observed while briefly acquiring the inode metadata lock.
 
 
 >> A5: Explain how your synchronization design provides "fairness".
@@ -164,7 +184,7 @@ process) from re-opening that directory, creating files
 >> process the way you did.
 
 A process' current working directory is stored as a struct dir on its 
-(only) thread structure. We chose to store the working directory on
+thread structure. We chose to store the working directory on
 the thread struct because all threads, including the main thread,
 are intialized through the function. This is where inherit the parent
 process' working directory, or set the working directory to root for
@@ -203,7 +223,15 @@ to disk. It repeats this procedure for the entire duration of the program.
 
 >> C4: Describe your implementation of read-ahead.
 
-Fuck. My. Life.
+Our read ahead implementation consists of one thread running in the 
+background and a queue of read ahead requests. When reading or writing 
+to a file, call cache_fetch with the sector number of the next sector in 
+the file. cache_fetch appends the sector number to the back of the fetch 
+queue and wakes up the thread in charge of performing the read ahead. The 
+read ahead thread, when woken up, places the contents of the requested 
+sectors in the cache. The thread continues processing all requests and goes 
+to sleep waiting for more requests to arrive. Access to the request queue is 
+synchronized using a dedicated lock.
 
 ---- SYNCHRONIZATION ----
 
