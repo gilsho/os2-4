@@ -12,80 +12,6 @@
 #include <stdio.h>
 
 
-#if (DEBUG & DEBUG_INODE)
-#define DEBUG_EXTEND        0
-#define DEBUG_CREATE        0
-#define DEBUG_OPEN          0
-#define DEBUG_READ          0
-#define DEBUG_WRITE         1
-#define DEBUG_FREE_SECTOR   0
-#define DEBUG_ICLOSE        0
-#else
-#define DEBUG_EXTEND        0
-#define DEBUG_CREATE        0
-#define DEBUG_OPEN          0
-#define DEBUG_READ          0
-#define DEBUG_WRITE         0
-#define DEBUG_FREE_SECTOR   0
-#define DEBUG_ICLOSE        0
-#endif
-
-#if DEBUG_EXTEND
-#define PRINT_EXTEND(X) {printf("(inode-extend) "); printf(X);}
-#define PRINT_EXTEND_2(X,Y) {printf("(inode-extend) "); printf(X,Y);}
-#else
-#define PRINT_EXTEND(X) do {} while(0)
-#define PRINT_EXTEND_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_CREATE
-#define PRINT_CREATE(X) {printf("(inode-create) "); printf(X);}
-#define PRINT_CREATE_2(X,Y) {printf("(inode-create) "); printf(X,Y);}
-#else
-#define PRINT_CREATE(X) do {} while(0)
-#define PRINT_CREATE_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_OPEN
-#define PRINT_OPEN(X) {printf("(inode-open) "); printf(X);}
-#define PRINT_OPEN_2(X,Y) {printf("(inode-open) "); printf(X,Y);}
-#else
-#define PRINT_OPEN(X) do {} while(0)
-#define PRINT_OPEN_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_READ
-#define PRINT_READ(X) {printf("(inode-read) "); printf(X);}
-#define PRINT_READ_2(X,Y) {printf("(inode-read) "); printf(X,Y);}
-#else
-#define PRINT_READ(X) do {} while(0)
-#define PRINT_READ_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_WRITE
-#define PRINT_WRITE(X,Y) {if (X >= 0) {printf("(inode-write) "); printf(Y);}}
-#define PRINT_WRITE_2(X,Y,Z) {if (X >= 0) {printf("(inode-write) "); printf(Y,Z);}}
-#else
-#define PRINT_WRITE(X,Y) do {} while(0)
-#define PRINT_WRITE_2(X,Y,Z) do {} while(0)
-#endif
-
-#if DEBUG_ICLOSE
-#define PRINT_ICLOSE(X) {printf("(inode-close) "); printf(X);}
-#define PRINT_ICLOSE_2(X,Y) {printf("(inode-close) "); printf(X,Y);}
-#else
-#define PRINT_ICLOSE(X,Y) do {} while(0)
-#define PRINT_ICLOSE_2(X,Y) do {} while(0)
-#endif
-
-#if DEBUG_FREE_SECTOR
-#define PRINT_FREE_SECTOR(X) {printf("(inode-free-sector) "); printf(X);}
-#define PRINT_FREE_SECTOR_2(X,Y) {printf("(inode-free-sector) "); printf(X,Y);}
-#else
-#define PRINT_FREE_SECTOR(X) do {} while(0)
-#define PRINT_FREE_SECTOR_2(X,Y) do {} while(0)
-#endif
-
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
 #define N_DIRECT_PTRS 12
@@ -293,7 +219,6 @@ static struct lock inode_list_lock;
 void
 inode_init (void) 
 {
-  PRINT_OPEN("inode_init()\n");
   list_init (&open_inodes);
   lock_init(&inode_list_lock);
 
@@ -307,8 +232,6 @@ inode_init (void)
 bool
 inode_create (block_sector_t sector, off_t length, bool is_dir)
 {
-  PRINT_CREATE_2("sector: %d\n", (int) sector);
-  PRINT_CREATE_2("length: %d\n", (int) length);
 
   ASSERT (length >= 0);
   struct inode_disk *disk_inode = NULL;
@@ -334,8 +257,6 @@ inode_create (block_sector_t sector, off_t length, bool is_dir)
   off_t my_length = inode_extend(&inode, disk_inode->length, length);
   inode_set_length(&inode, my_length);
 
-  PRINT_CREATE_2("inode_length: %d\n",inode_length(&inode));
-
   free (disk_inode);
     
   return my_length == length;
@@ -350,24 +271,18 @@ inode_free_sectors(struct inode *inode, int start_block,
   ASSERT(end_block >= start_block);
   ASSERT(end_block < (int) (N_DIRECT_PTRS + N_INDIRECT_PTRS + N_DBL_INDIRECT_PTRS));
 
-  PRINT_FREE_SECTOR_2("inode sector: %d\n",inode->sector);
-  PRINT_FREE_SECTOR_2("inode_length: %d\n",inode_length(inode));
-  PRINT_FREE_SECTOR_2("start_block: %d\n",start_block);
-  PRINT_FREE_SECTOR_2("end block: %d\n",end_block);
   if(inode_length(inode) <= 0)
     return;
   int cur_block;
   for (cur_block = end_block; cur_block >= start_block; cur_block--)
   {
-    PRINT_FREE_SECTOR_2("freeing cur_block: %d\n",cur_block);
     /* clean up direct data sectors */
     if (cur_block < N_DIRECT_PTRS)
     {
       block_sector_t stale_sector = inode_get_direct_sector(inode,cur_block);
-      PRINT_FREE_SECTOR_2("freeing sector: %d\n",stale_sector); 
+
       free_map_release (stale_sector, 1);
       inode_set_direct_sector(inode,cur_block,0); 
-      PRINT_FREE_SECTOR("free successful\n");
     }
 
     /* clean up indirect sectors, meta & data */
@@ -383,7 +298,6 @@ inode_free_sectors(struct inode *inode, int start_block,
 
 
       if (cur_block == N_DIRECT_PTRS) {
-        PRINT_FREE_SECTOR("releasing inode indirect table");
         free_map_release(indirect_table,1);
         inode_set_indirect_sector_table(inode,UNUSED_SECTOR);
       }
@@ -409,13 +323,11 @@ inode_free_sectors(struct inode *inode, int start_block,
       inode_set_sector_table_entry(indirect_table, indirect_idx, 0);
 
       if (indirect_idx == 0) {
-        PRINT_FREE_SECTOR("releasing inner indirect table");
         free_map_release(indirect_table,1);
         inode_set_sector_table_entry(dbl_indirect_table,dbl_indirect_idx,UNUSED_SECTOR);
       }
 
       if (cur_block == N_DIRECT_PTRS + N_INDIRECT_PTRS) {
-        PRINT_FREE_SECTOR("releasing double indirect table");
         free_map_release(dbl_indirect_table,1);
         inode_set_dbl_indirect_sector_table(inode,UNUSED_SECTOR);
       }
@@ -435,8 +347,6 @@ inode_open (block_sector_t sector)
 {
   struct list_elem *e;
   struct inode *inode;
-
-  PRINT_OPEN_2("sector: %d\n", sector);
 
   lock_acquire(&inode_list_lock);
   /* Check whether this inode is already open. */
@@ -475,9 +385,6 @@ inode_open (block_sector_t sector)
   list_push_front (&open_inodes, &inode->elem);
 
   lock_release(&inode_list_lock);
- 
-
-  PRINT_OPEN_2("open_cnt: (after increment) %d\n",inode->open_cnt);
 
   return inode;
 }
@@ -526,8 +433,6 @@ inode_close (struct inode *inode)
     return;
 
   inode->open_cnt--;
-  PRINT_ICLOSE_2("sector: %d\n",inode->sector);
-  PRINT_ICLOSE_2("open_cnt: %d\n",inode->open_cnt);
 
   /* Release resources if this was the last opener. */
   if (inode->open_cnt == 0)
@@ -540,7 +445,6 @@ inode_close (struct inode *inode)
       if (inode->removed) 
         {
           /* Should this be on stack? Malloc? */
-          PRINT_ICLOSE_2("WE ARE FREEING %d\n",inode->sector);
           block_sector_t end_block = byte_to_block(inode_length(inode));
           inode_free_sectors(inode,0,end_block);
 
@@ -575,8 +479,6 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
   off_t length = inode_length(inode);
   lock_release(&(inode->lock_file));
 
-
-  PRINT_READ_2("inode sector: %d\n", inode->sector);
   while (size > 0) 
     {
       /* Disk sector to read, starting byte offset within sector. */
@@ -595,10 +497,6 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       if (chunk_size <= 0)
         break;
 
-      PRINT_READ_2("sectord_idx: %d\n", (int) sector_idx);
-      PRINT_READ_2("read_size: %d\n", size);
-      PRINT_READ_2("offset: %d\n",sector_ofs);
-      PRINT_READ_2("chunk_size: %d\n", chunk_size);
 
       cache_read(sector_idx, next_sector_idx, buffer + bytes_read, sector_ofs, 
                   chunk_size);
@@ -628,13 +526,7 @@ inode_extend(struct inode *inode, int old_length, int new_length)
   int end_write_block = byte_to_block(new_length);
 
   bool success = true;
-  
-  PRINT_EXTEND_2("sector: %d\n",inode->sector);
-  PRINT_EXTEND_2("cur_block: %d\n",cur_block);
-  PRINT_EXTEND_2("end_block: %d\n",end_block);
-  PRINT_EXTEND_2("end_write_block: %d\n",end_write_block);
-  PRINT_EXTEND_2("length: %d\n",length);
-  PRINT_EXTEND_2("new_length: %d\n", new_length);
+
 
   int cur_block;
   for (cur_block = end_block+1; cur_block <= end_write_block; cur_block++)
@@ -777,7 +669,6 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
     while(inode->extending){
       cond_wait(&inode->ready_to_extend, &inode->lock_file);
     }
-    PRINT_WRITE_2(0,"extending to: %d\n", (int) end_write_bytes);
 
     length = inode_length(inode);
     if(end_write_bytes > length)
@@ -795,16 +686,6 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
     block_sector_t sector_idx = byte_to_sector (inode, my_length, offset);
     block_sector_t next_sector_idx = byte_to_sector (inode, my_length, offset+BLOCK_SECTOR_SIZE);
 
-    PRINT_WRITE_2(sector_idx,"offset: %d\n", (int) offset);
-
-
-
-    PRINT_WRITE_2(sector_idx,"my_length: %d\n", (int) my_length);
-
-    PRINT_WRITE_2(sector_idx,"file_length: %d\n", inode_length(inode));
-
-    PRINT_WRITE_2(sector_idx,"block num: %d\n", (int) byte_to_block(offset));
-
     int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
     /* Bytes left in inode, bytes left in sector, lesser of the two. */
@@ -812,14 +693,6 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
     int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
     int min_left = inode_left < sector_left ? inode_left : sector_left;
     int chunk_size = size < min_left ? size : min_left;
-
-
-    PRINT_WRITE_2(sector_idx,"inode_left: %d\n", inode_left);
-    PRINT_WRITE_2(sector_idx,"sector_left: %d\n", sector_left);
-    PRINT_WRITE_2(sector_idx,"min_left: %d\n", min_left);
-    PRINT_WRITE_2(sector_idx,"sector_idx: %d\n", sector_idx);
-    PRINT_WRITE_2(sector_idx,"sector_ofs: %d\n", sector_ofs);
-    PRINT_WRITE_2(sector_idx,"chunk_size: %d\n", chunk_size);
 
 
     /* Number of bytes to actually write into this sector. */

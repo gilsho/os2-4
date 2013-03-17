@@ -37,6 +37,17 @@ All parts were implemented together with equal contribution.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+struct inode_disk
+  {
+    block_sector_t direct[N_DIRECT_PTRS];  /* first-order data sector. */
+    block_sector_t indirect;							/* sector containing pointers to other sectors*/
+    block_sector_t dbl_indirect;					/* doubly indirect sector*/
+    off_t length;                          /* File size in bytes. */
+    bool is_dir;                           /* True if inode is a director*/
+    unsigned magic;                        /* Magic number. */
+    uint32_t unused[111];                  /* Not used. */
+  };
+
 >> A2: What is the maximum size of a file supported by your inode
 >> structure?  Show your work.
 
