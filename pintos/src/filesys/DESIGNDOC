@@ -42,7 +42,8 @@ All parts were implemented together with equal contribution.
 struct inode_disk
   {
     block_sector_t direct[N_DIRECT_PTRS];  /* first-order data sector. */
-    block_sector_t indirect;							/* sector containing pointers to other sectors*/
+    block_sector_t indirect;							/* sector containing pointers to other 
+    																				sectors*/
     block_sector_t dbl_indirect;					/* doubly indirect sector*/
     off_t length;                          /* File size in bytes. */
     bool is_dir;                           /* True if inode is a director*/
@@ -53,10 +54,13 @@ struct inode_disk
 /* In-memory inode. */
 struct inode 
   {
-    struct lock lock_dir;               /* used for adding/removing from directory */
+    struct lock lock_dir;               /* used for adding/removing from 
+    																			directory */
     struct lock lock_file;              /* Used to check metadata of file */
-    bool extending;                     /* flag for if file is currently being extended*/
-    struct condition ready_to_extend;   /* condition variable to wait on file being ready 																			to extend */
+    bool extending;                     /* flag for if file is currently being 
+    																				extended*/
+    struct condition ready_to_extend;   /* condition variable to wait on file 
+    																				being ready to extend */
   };
 
 >> A2: What is the maximum size of a file supported by your inode
@@ -73,7 +77,7 @@ the maximum size of a file is:
 
 
 If we include the overheard of allocating metadata, there are 130 
-additionalsectors (1 for the inode, 129 for indirect pointer tables), 
+additional sectors (1 for the inode, 129 for indirect pointer tables), 
 which brings the total filesize to 8526848 bytes.
 
 ---- SYNCHRONIZATION ----
@@ -81,49 +85,21 @@ which brings the total filesize to 8526848 bytes.
 >> A3: Explain how your code avoids a race if two processes attempt to
 >> extend a file at the same time.
 
-To determine if a process needs to extend a file, it must compare
-its 'desired' length to the current length of the file. Before 
-getting the current length of a file, a process must acquire the 
-lock for that file. If the process determines that an extension
-is necessary, it first checks to see if the file is already being
-extended. If it is, then the current process must wait on a condition 
-variable until the previous extension is complete. Upon waking, it 
-will determine again if an extension is necessary.
+Before getting the current length of a file, a process must acquire the 
+lock for that file. If the process determines that an extension is necessary, 
+it first checks to see if the file is already being extended. If it is, then 
+the current process must wait on a condition variable until the previous 
+extension is complete. Upon waking, it will determine again if an extension is 
+necessary.
 
-When a process extends, it releases the lock, and allocates the 
-sectors needed for extension. It then writes its data to those
+Right before performing the extension, the process releases the lock, and 
+allocates the additional sectors needed. It then writes its data to those
 sectors. Once allocation and writing of the extended region is 
-complete, the process reacquires the inode metadata lock and 
+complete, the process reacquires the lock and 
 updates the file length to reflect the extension. The key point
 is that the file length is updated only after the allocation and
 writing of data is complete. It will then broadcast to other
 processes who are waiting to extend.
-
-
-------------------------------------------------------------------
-
-Synchronization is enforced at the inode level for both files and
-directories. Each inode contains a flag indicating if an extension
-is in process and a condition variable associated with that extension 
-flag. Read and write operations do not hold the inode during execution, 
-however the lock must be acquired briefly to examine an inode's metadata 
-(the extending flag and file length).
-
-Only one process may extend a file at any given time. The kernel detects 
-if an inode extension is necessary by examining the length of the inode
-after a write operation. If an extension is necessary and the extension 
-flag is clear, the process sets the extension flag, releases the lock,
-and proceeds to allocate and write the extended region. If the process
-attempts to extend but cannot because another is extending, the process 
-waits on a condition variable until the previous extension is complete. 
-Upon waking, it will determine again if an extension is necessary.
-
-Once allocation and writing of the extended region is complete, the 
-process reacquires the inode metadata lock and updates the file length 
-to reflect the extension. This allows other processes  to read and write
-(but not extend) the inode concurrently because they will not observe 
-the change in file length until the extension is complete and therefore
-will not attempt to access the extended file region.
 
 
 >> A4: Suppose processes A and B both have file F open, both
@@ -138,15 +114,15 @@ Our implementation of file extension guarantees that from the perspective
 of process A, file extension by process B is atomic. This is because
 process B will only update the file length after the entire allocation and
 writing of new sectors is complete. Process A will, therefore, either get 
-the 'old' inode length, in which case he is unable to read data that is 
-currently being written by process B, or, he gets the new inode length,
+the 'old' inode length, in which case it is unable to read data that is 
+currently being written by process B, or, it gets the new inode length,
 in which case process B has completed its writes, so process A can now read
 all of the newly extended file's data blocks.
 
 Since process B will synchronously update the file length
 only after the extension (allocation and writing) is complete, process A 
-will read all or none of the extended file region based the file length
-it observed while briefly acquiring the inode metadata lock.
+will read all or none of the extended file region based on the file length
+it observed while briefly acquiring the inode lock prior to reading.
 
 
 >> A5: Explain how your synchronization design provides "fairness".
@@ -158,14 +134,14 @@ it observed while briefly acquiring the inode metadata lock.
 
 The only blocking that happens is a file extension blocking 
 another file extension. If a process wants to extend the file,
-it must wait until all previous extensions are complete.
+it must wait until ongoing extensions are complete.
 
-No reader or writer who does not need to extend is ever blocked 
+Readers and writers that do not extend will never block 
 when accessing a file so there is no possibility of readers 
 or writers indefinitely blocking each other.
 
 None of these operations hold the lock while reading or writing
-data. The lock is only held breifly while checking inode metadata.
+data. The lock is only held briefly while checking inode metadata.
 
 
 ---- RATIONALE ----
@@ -188,9 +164,8 @@ since the majority of files are relatively small in practice. Having
 12 direct sector pointers means that the sectors for the first 
 6 KB of a file can be accessed in just one seek.
 
-We include a single sector for indirect pointer entries by convention, 
-as well as for improved seek times (two seeks) versus doubly indirect
-accesses (3 seeks).
+We include a single sector for indirect pointer entries for improved seek 
+times (two seeks) versus doubly indirect accesses (3 seeks).
 
 			    SUBDIRECTORIES
 			    ==============
@@ -216,13 +191,13 @@ struct dir *wdir;
 Given a valid user-specified path, we first determine if it is an 
 absolute path or a relative path by examining the first character;
 a leading '/' indicates it will be parsed as an absolute path. If it
-is an absolute path, the traversal begins in the root directory; it 
+is an absolute path, the traversal begins in the root directory; if 
 it is a relative path, traversal begins in the process' current working
 directory.
 
 Our path traversal algorithm is an iterative approach. We tokenize 
 the full path using the '/' delimiter. For each token, we check to 
-see if an entry whose name is token exists in the current directory.
+see if an entry for the token exists in the current directory.
 If it does not, then we can simply return false, since the path could
 not be resolved. If it is, then the current directory becomes the token
 just found, and we repeat the procedure with the next token. Once we
@@ -254,15 +229,14 @@ directory entries.
 >> working directory?  If so, what happens to that process's future
 >> file system operations?  If not, how do you prevent it?
 
-Our implementation allows for empty directories to be removed, even 
+Our implementation allows for an empty directory to be removed, even 
 if it is the current process' working directory or if it is in use 
 by another process. However, this prevents any process from
-creating files in this directory since you are not allowed to 
+creating files in this directory since a process is not allowed to 
 create a file in a directory whose inode has been set to be 
 removed. Since this directory is by definition empty (only empty
 directories can be deleted) no process could read from this 
 directory either. 
-
 
 ---- RATIONALE ----
 
@@ -272,9 +246,9 @@ directory either.
 A process' current working directory is stored as a struct dir on its 
 thread structure. We chose to store the working directory on
 the thread struct because all threads, including the main thread,
-are intialized through the function. This is where inherit the parent
-process' working directory, or set the working directory to root for
-the main thread.
+are intialized through thread_create. This is where a process inherits its 
+parent process' working directory. The main thread does not have a parent,
+so its working directory is set to be root in thread_create.
 
 
 			     BUFFER CACHE
@@ -333,33 +307,31 @@ struct fetch_request {
 >> C2: Describe how your cache replacement algorithm chooses a cache
 >> block to evict.
 
-Our cache replacement is an implementation of LRU eviction. We maintain
-a static list of cache entries that are not blocking on I/O, ordered
-by least to most recently accessed time. When sectors that have existing
-entries in the cache are accessed due to read/write operations, they are
-move to the tail of the list. When eviction occurs, the LRU algorithm 
-simply pops the entry at the front of the list, which is the least 
-recently used entry. The new entry that is put in its place is appended 
-to the tail of the LRU entry list.
+Our cache implements LRU eviction. We maintain
+a list of cache slots ordered by accessed time. When sectors that have existing
+entries in the cache are accessed due to read/write operations, their cache
+slots are moved to the tail of the list. When eviction occurs, the LRU algorithm 
+simply pops the slot at the front of the list, which is the least 
+recently used slot. 
 
 >> C3: Describe your implementation of write-behind.
 
-When the cache is initialized, a dedicated 'cleaner' thread is
+When the cache is initialized, a dedicated 'flusher' thread is
 spawned. This thread runs in a continuous while loop. It sleeps for 30
 seconds, then wakes up and flushes the entire cache by writing all contents
 to disk. It repeats this procedure for the entire duration of the program.
 
 >> C4: Describe your implementation of read-ahead.
 
-Our read ahead implementation consists of one thread running in the 
-background and a queue of read ahead requests. When reading or writing 
-to a file, call cache_fetch with the sector number of the next sector in 
-the file. cache_fetch appends the sector number to the back of the fetch 
-queue and wakes up the thread in charge of performing the read ahead. The 
-read ahead thread, when woken up, places the contents of the requested 
-sectors in the cache. The thread continues processing all requests and goes 
-to sleep waiting for more requests to arrive. Access to the request queue is 
-synchronized using a dedicated lock.
+When the cache is initialized, a dedicated 'fetcher' thread is
+spawned. This thread runs in the background, waiting for fetch requests. 
+When a process reads data from or writes data to the cache, it requests the 
+next sector in the file. The cache will then queue the request and wake up the 
+fetcher thread. The fetcher thread, when woken up, checks if the requested 
+sector is already in the cache, and if it isn't, reads it from disk. 
+
+The fetcher thread repeats this procedure for the entire duration of the 
+program. Access to the request queue is synchronized using a dedicated lock.
 
 ---- SYNCHRONIZATION ----
 
@@ -367,24 +339,24 @@ synchronized using a dedicated lock.
 >> buffer cache block, how are other processes prevented from evicting
 >> that block?
 
-Firstly, since the eviction policy is LRU, once a block is about to 
-be read from or written to, it is placed to the back of the queue of blocks
-eligible for eviction. Hence, a block that is actively being read
+Since the eviction policy is LRU, once a cache slot is about to 
+be read from or written to, it is moved to the back of the queue of slots
+eligible for eviction. Hence, a slot that is actively being read
 from or written to is unlikely to be chosen for eviction.
 
-When a process is about to read from or write to a buffer cache block,
-that process increments the 'num_accessors' variable on that cache block.
-If another process decides to evict a certain block, it must wait until the 
-number of accessors for that block is zero. Thus it is blocked while other 
-processes are actively reading from and writing to the sector. Note, however
+When a process is about to read from or written to a buffer cache slot,
+that process increments accessor counter on that cache slot.
+If another process decides to evict a certain slot, it must wait until the 
+number of accessors for that slot is zero. Thus it is blocked while other 
+processes are actively reading from and writing to the slot. Note, however,
 that having to wait here is highly unlikely and, indeed, will only happen 
-when every block in the cache is being used by some process.
+when every block in the cache is being accessed simultaneously.
 
 
 >> C6: During the eviction of a block from the cache, how are other
 >> processes prevented from attempting to access the block?
 
-During eviction of a block, we set a flag on that block 'io-busy' to
+During eviction of a block, we set a flag on that slot ('io-busy') to
 be true. Whenever a process tries to access a block it must check the
 io-busy flag. If it is set to true, the process must wait until the
 eviction is complete. 
@@ -396,19 +368,19 @@ eviction is complete.
 
 Buffer caching:
 Repetitive accesses of the same memory location will benefit from
-buffer caching, e.g. frequently changing the state of some character
-in a game
+buffer caching, e.g. accessing a file will cause you to access that file's
+inode sector repeatedly in order to find out where the file's data blocks are.
 
 Read-ahead:
 Sequential access of a file would benefit from read-ahead. For 
 example playing a music or video file, where you know you are
-going to want to read later blocks in the file.
+going to want to read blocks from file in sequence.
 
 Write-behind:
-Any workload which wanted to not lose all its data after an unexpected
-system crash would benefit from write-behind, because the process could
-be assured that at most, it only lost the most recent 30 seconds of 
-data.
+Any workload which didn't want to lose its data after an unexpected
+system crash but also did not want to sacrifice performance would benefit 
+from write-behind. Write-behind ensures that at most, only the most recent 
+30 seconds of data will be lost.
 
 
 			   SURVEY QUESTIONS
