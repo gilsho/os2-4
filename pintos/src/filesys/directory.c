@@ -74,6 +74,7 @@ bool add_entry(struct dir *dir, const char *name, block_sector_t inode_sector);
 bool remove_entry(struct dir *dir, const char *name);
 bool dir_is_empty(struct inode *inode);
 
+
 bool
 dir_create_root(void){
   if(!inode_create (ROOT_DIR_SECTOR, EMPTY_DIR_SIZE, true))
@@ -335,6 +336,8 @@ dir_remove(struct dir *dir, const char *name)
   if(strcmp(name, PARENT_DIR) == 0 || strcmp(name, CURRENT_DIR) == 0)
     return false;
 
+  inode_acquire_dir_lock(dir->inode);
+
   /* Find directory entry. */
   PRINT_REMOVE("milestone 1\n");
   if (!lookup (dir, name, &e, &ofs))
@@ -356,11 +359,14 @@ dir_remove(struct dir *dir, const char *name)
   /* Remove inode. */
   inode_remove (inode);
 
+  
+
   success = true;
   PRINT_REMOVE("milestone 4\n");
 
   PRINT_REMOVE_2("inode: %p\n",inode);
  done:
+  inode_release_dir_lock(dir->inode);
   if (inode != NULL)
     inode_close (inode);
   return success;
@@ -428,3 +434,14 @@ dir_get_inumber(struct dir *dir)
 {
   return (int) inode_get_sector(dir->inode);
 }
+
+void
+dir_acquire_inode_lock(struct dir *dir){
+  inode_acquire_dir_lock(dir->inode);
+}
+
+void
+dir_release_inode_lock(struct dir *dir){
+  inode_release_dir_lock(dir->inode);
+}
+

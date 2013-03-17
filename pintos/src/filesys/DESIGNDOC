@@ -111,9 +111,17 @@ will not attempt to access the extended file region.
 >> nonzero data, A is not allowed to see all zeros.  Explain how your
 >> code avoids this race.
 
-Our implementation of file extension occurs 'behind the scenes' such
-that any read operation by process A is oblivious to an ongoing extension
-by process B. Since process B will synchronously update the file length
+
+Our implementation of file extension guarantees that from the perspective
+of process A, file extension by process B is atomic. This is because
+process B will only update the file length after the entire allocation and
+writing of new sectors is complete. Process A will, therefore, either get 
+the 'old' inode length, in which case he is unable to read data that is 
+currently being written by process B, or, he gets the new inode length,
+in which case process B has completed its writes, so process A can now read
+all of the newly extended file's data blocks.
+
+Since process B will synchronously update the file length
 only after the extension (allocation and writing) is complete, process A 
 will read all or none of the extended file region based the file length
 it observed while briefly acquiring the inode metadata lock.
@@ -126,7 +134,16 @@ it observed while briefly acquiring the inode metadata lock.
 >> processes writing to a file cannot prevent another process forever
 >> from reading the file.
 
+The only blocking that happens is a file extension blocking 
+another file extension. If a process wants to extend the file,
+it must wait until all previous extensions are complete.
 
+No reader or writer who does not need to extend is ever blocked 
+when accessing a file so there is no possibility of readers 
+or writers indefinitely blocking each other.
+
+None of these operations hold the lock while reading or writing
+data. The lock is only held breifly while checking inode metadata.
 
 
 ---- RATIONALE ----
@@ -139,13 +156,18 @@ it observed while briefly acquiring the inode metadata lock.
 
 We adopt the multilevel index scheme presented in lecture on our
 inode structure, which contains direct, indirect, and doubly
-idirect blocks. Given that the filesystem capacity is at most 8 MB, 
-the 128*128 double indirect sectors sufficiently meet this size
-requirement. We include 12 direct sector pointers for better
-performance on smaller files (single disk seek), since the majority
-of files are relatively small in practice. We include a single
-sector for indirect pointer entries by convention, as well as
-for improved seek times (two seeks) versus doubly indirect
+idirect blocks. Given that the filesystem capacity is at most 8 MB,
+we chose a combination that would give us a max file size of 8MB. 
+Having 1 indirect sector and 1 double indirect sector allows us to
+meet this size requirement. 
+
+We also wanted to make sure we had good performace on small files
+since the majority of files are relatively small in practice. Having
+12 direct sector pointers means that the sectors for the first 
+6 KB of a file can be accessed in just one seek.
+
+We include a single sector for indirect pointer entries by convention, 
+as well as for improved seek times (two seeks) versus doubly indirect
 accesses (3 seeks).
 
 			    SUBDIRECTORIES
@@ -164,14 +186,20 @@ accesses (3 seeks).
 
 Given a valid user-specified path, we first determine if it is an 
 absolute path or a relative path by examining the first character;
-a leading '/' indicates it will be parsed as an absolute path. 
-
-We determine the base directory (start_dir)
+a leading '/' indicates it will be parsed as an absolute path. If it
+is an absolute path, the traversal begins in the root directory; it 
+it is a relative path, traversal begins in the process' current working
+directory.
 
 Our path traversal algorithm is an iterative approach. We tokenize 
-the full path at '/' boundaries string using strtok_r, and 
-handle the individual elements one-by-one.
-
+the full path using the '/' delimiter. For each token, we check to 
+see if an entry whose name is token exists in the current directory.
+If it does not, then we can simply return false, since the path could
+not be resolved. If it is, then the current directory becomes the token
+just found, and we repeat the procedure with the next token. Once we
+run out of tokens, we can return the inode that we have found. If at any
+point we try to open an entry as a directory, and it was NOT a directory
+we also return false, since this means that the path was mal-formed.
 
 
 ---- SYNCHRONIZATION ----
@@ -181,23 +209,30 @@ handle the individual elements one-by-one.
 >> should succeed, as should only one of two simultaneous attempts to
 >> create a file with the same name, and so on.
 
-There is a lock on each struct dir that are opened and in memory.
-There is no need to synchronize readdir access operations, however
-we enforce access control by acquiring the directory lock when entries 
-are added or removed from the directory. These entry operations are
-one component of creating and removing a file or directory, so threads 
-only block during these sub-sections of code. 
+Whenever a process wants to add or remove a file, it must first
+acquire the lock for the parent directory. It then checks to
+see if that file has already been created/removed. If so, then
+it returns from the function. If not, then it can proceed with
+its operation, and release the lock only after it has
+created/removed the file. In this way, the check for the file's
+existence and the creation/removal are together an atomic 
+operation. Therefore, we cannot get race conditions on our
+directory entries. 
 
 
 >> B5: Does your implementation allow a directory to be removed if it
->> is open by a process or if it is in use as a process's current
+>> is open by a process or if it is in use as a process' current
 >> working directory?  If so, what happens to that process's future
 >> file system operations?  If not, how do you prevent it?
 
-Our implementation allows for empty directories to be removed if it is
-the current process' working directory or if it is in use by another
-process. However, this prevents any process (including the current
-process) from re-opening that directory, creating files 
+Our implementation allows for empty directories to be removed, even 
+if it is the current process' working directory or if it is in use 
+by another process. However, this prevents any process from
+creating files in this directory since you are not allowed to 
+create a file in a directory whose inode has been set to be 
+removed. Since this directory is by definition empty (only empty
+directories can be deleted) no process could read from this 
+directory either. 
 
 
 ---- RATIONALE ----

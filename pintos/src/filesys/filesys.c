@@ -163,16 +163,25 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
   PRINT_FCREATE_2("milestone 2 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
 
 
-  if(dir_lookup(start_dir, path, NULL))
+  if(start_dir == NULL)
     goto done;
 
-  if(start_dir == NULL || !free_map_allocate (1, &inode_sector))
-    goto done;
-
-  PRINT_FCREATE_2("milestone 3 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
+   PRINT_FCREATE_2("milestone 3 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
   if(!filesys_resolve_path(start_dir, path, &parent_dir, &name))
     goto done;
 
+  if(parent_dir == NULL || name == NULL)
+    goto done;
+
+  dir_acquire_inode_lock(parent_dir);
+
+  if(dir_lookup(parent_dir, name, NULL))
+    goto done;
+
+  if(!free_map_allocate (1, &inode_sector))
+    goto done;
+
+ 
 
   PRINT_FCREATE_2("name: %s\n", name);
   /* TAKE THIS OUT */
@@ -195,12 +204,16 @@ filesys_create (struct dir *start_dir, const char *path, off_t initial_size, boo
   success = true;
 
   done:
+    if(parent_dir != NULL && name != NULL)
+      dir_release_inode_lock(parent_dir);
+
     if(name != NULL)
       free(name);
     if(parent_dir != NULL){
       dir_close(parent_dir);
       parent_dir = NULL;
     }
+
     PRINT_FCREATE_2("milestone 5 count: %d\n", inode_get_count(dir_get_inode(start_dir)));
     if(start_dir != NULL){
       dir_close(start_dir);

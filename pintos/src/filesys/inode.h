@@ -28,4 +28,10 @@ bool inode_is_removed(struct inode *);
 
 int inode_get_count(struct inode *);
 
+
+void inode_acquire_dir_lock(struct inode *);
+
+void inode_release_dir_lock(struct inode *);
+
+
 #endif /* filesys/inode.h */

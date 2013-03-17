@@ -39,5 +39,8 @@ bool dir_create (struct dir *parent_dir, block_sector_t sector);
 bool dir_create_root(void);
 struct dir* dir_open_file(struct file *file);
 
+void dir_acquire_inode_lock(struct dir *dir);
+void dir_release_inode_lock(struct dir *dir);
+
 
 #endif /* filesys/directory.h */
