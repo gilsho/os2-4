@@ -21,7 +21,6 @@
 #include "threads/malloc.h"
 
 
-
 /* This struct contains all the information related to a process */
 struct process_info
 {
@@ -541,8 +540,6 @@ load (const char *args, void (**eip) (void), void **esp, struct file **file)
   if (!parse_args(args,esp,&file_name))
     goto done;
 
-
-
   struct dir *wdir = process_get_wdir();
 
   (*file) = filesys_open_file (wdir, file_name);
@@ -638,8 +635,6 @@ load (const char *args, void (**eip) (void), void **esp, struct file **file)
     file_close (*file);
     (*file) = NULL;
   }
-
-
 
   return success;
 }

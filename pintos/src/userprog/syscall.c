@@ -15,7 +15,6 @@
 #define FILENAME_MAX 14
 
 
-
 void syscall_init (void);
 static void syscall_handler (struct intr_frame *);
 
@@ -48,7 +47,6 @@ void
 syscall_init (void) 
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
-
 }
 
 /* Handler for all system calls */
@@ -283,7 +281,6 @@ bool sys_remove(int *stack, uint32_t *eax)
   int result;
 
   result = (int)process_remove_file(file_name);
-
   
   /* push syscall result to the user program */
   memcpy(eax, &result, sizeof(uint32_t));
@@ -304,7 +301,6 @@ bool sys_open(int *stack, uint32_t *eax)
 	if(strnlen(path, PGSIZE) > 0){
 
 		fd = process_fd_open(path);
-
 	}
 
 	/* push syscall result to the user program */
@@ -326,7 +322,6 @@ bool sys_filesize(int *stack, uint32_t *eax)
 	
 
 	file_len = (uint32_t) file_length (file);
-
 	
 	/* push syscall result to the user program */
   memcpy(eax, &file_len, sizeof(uint32_t));
@@ -373,7 +368,6 @@ bool sys_read(int *stack, uint32_t *eax)
 	  {
 
 	    bytes_read = (int) file_read (file, (void *)buffer, (off_t) size);
-
     }
   }
   	
@@ -415,7 +409,6 @@ bool sys_write(int *stack, uint32_t *eax)
 	  {
 
 	    bytes_written = (int) file_write (file, buffer, (off_t) size); 
-
 	  }
 	}
 	
@@ -437,7 +430,6 @@ bool sys_seek(int *stack)
 
 
 	file_seek (file, (off_t) new_pos);
-
 	
 	return true;		
 }
@@ -454,7 +446,9 @@ bool sys_tell(int *stack, uint32_t *eax)
 	unsigned pos;
 	
 
+
 	pos = (unsigned) file_tell (file); 
+
 
 	
 	/* push syscall result to the user program */
